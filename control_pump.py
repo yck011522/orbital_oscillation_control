@@ -10,6 +10,12 @@ import math
 from pymodbus.client import ModbusSerialClient
 from pymodbus.client.mixin import ModbusClientMixin
 
+from actuator_ik_table05 import create_actuator_lookup_function
+from motor_control import send_absolute_position_mm, open_serial, home_all_motors
+
+lookup_actuator_position = create_actuator_lookup_function()
+
+
 
 
 def list_serial_ports():
@@ -87,7 +93,15 @@ channels = {
     "CH4": 306,
 }
 
+# Serial connection
 client.connect()
+
+# Serial connection for motor control
+ser = open_serial()
+if not home_all_motors(ser, settle_position_mm=28.1):
+    print("Homing failed. Exiting.")
+    exit()
+
 
 # Slope unit is in gramForce per raw value count    
 SLOPE = {"CH1": 0.000160217269343611, "CH2": 0.00015715760370146, "CH3": 0.000158163217397836, "CH4": 0.000160217269343611}  # measured zero values
@@ -100,12 +114,11 @@ SENSOR_POSITIONS = {
     "CH4": (-64.300, 176.662),
 }
 
-# Constants
+# OpenCV Constants
 canvas_size = 400
 center = (canvas_size // 2, canvas_size // 2)
 radius_max = 180  # mm
 scale = (canvas_size // 2 - 20) / radius_max  # mm to pixels
-
 trail = deque(maxlen=10)
 
 cv2.namedWindow("Weight Position (Polar View)", cv2.WINDOW_NORMAL)
@@ -161,7 +174,43 @@ def update_cv_polar(angle_deg=None, radius_mm=None, tilt_x=None, tilt_y=None):
     cv2.imshow("Weight Position (Polar View)", img)
     cv2.waitKey(1)
 
-# Motion Control code 
+# Table Control Variables
+
+P = 8.75  # mm
+alpha_deg = 7.766
+alpha_rad = np.radians(alpha_deg)
+max_elevation_deg = 1.2
+max_elevation_rad = np.radians(max_elevation_deg)
+actuator_value_offset = 0.0
+speed_rpm = 300
+
+
+# filter_rate_elevation = 0.002
+# filter_rate_azimuth = 0.5
+filter_rate_elevation = 0.01
+filter_rate_azimuth = 0.9
+target_elevation = 0.0
+target_azimuth = 0.0
+current_elevation = 0.0
+current_azimuth = 0.0
+
+
+def actuator_length(theta_eff):
+    return lookup_actuator_position(theta_eff)
+
+def polar_to_tilt_components(elevation, azimuth):
+    theta_x = np.arctan(np.tan(elevation) * np.cos(azimuth))
+    theta_y = - np.arctan(np.tan(elevation) * np.sin(azimuth))
+    return theta_x, theta_y
+
+def limit_change(current, target, rate):
+    delta = target - current
+    if abs(delta) > rate:
+        delta = rate * np.sign(delta)
+    return current + delta
+
+
+# Motion Control Variables 
 prev_angle = None
 prev_time = time.time()
 angular_velocity_filtered = 0.0
@@ -246,6 +295,27 @@ try:
         tilt_y = tilt_magnitude * math.sin(tilt_azimuth_rad)
         print(f"Tilt X: {tilt_x:8.3f} mm , Y: {tilt_y:8.3f} mm")
 
+        # Set actuator target positions
+        target_elevation = np.radians(tilt_magnitude)
+        target_azimuth = np.radians(tilt_azimuth)
+
+        # Apply rate limiting filter
+        current_elevation = limit_change(current_elevation, target_elevation, filter_rate_elevation)
+        current_azimuth = limit_change(current_azimuth, target_azimuth, filter_rate_azimuth)
+
+        theta_x, theta_y = polar_to_tilt_components(current_elevation, current_azimuth)
+
+        L_x_plus  = actuator_length(theta_x) + actuator_value_offset
+        L_x_minus = actuator_length(-theta_x) + actuator_value_offset
+        L_y_plus  = actuator_length(theta_y) + actuator_value_offset
+        L_y_minus = actuator_length(-theta_y) + actuator_value_offset
+
+        send_absolute_position_mm(ser, L_x_plus, 1, speed_rpm=speed_rpm)
+        send_absolute_position_mm(ser, L_y_minus, 2, speed_rpm=speed_rpm)
+        send_absolute_position_mm(ser, L_x_minus, 3, speed_rpm=speed_rpm)
+        send_absolute_position_mm(ser, L_y_plus, 4, speed_rpm=speed_rpm)
+
+
         if total > 0.1:  # Ignore near-zero weight
             print(f"Position X: {position_x:8.3f} mm , Y: {position_y:8.3f} mm")
             print(f"Distance from center: {distance_from_center:8.3f} mm , Angle: {angle_from_x_axis:8.3f} degrees")
@@ -269,6 +339,8 @@ try:
 except KeyboardInterrupt:
     print("\nExiting...")
 finally:
+    send_absolute_position_mm(ser, 21.5, 0, speed_rpm=200)
+    ser.close()
     client.close()
     cv2.destroyAllWindows()
 
