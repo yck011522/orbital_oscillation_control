@@ -1,0 +1,209 @@
+import cv2
+import numpy as np
+from collections import deque
+import math
+
+
+import time
+import os
+import math
+from pymodbus.client import ModbusSerialClient
+from pymodbus.client.mixin import ModbusClientMixin
+
+client = ModbusSerialClient(
+    port="COM18", baudrate=38400, bytesize=8, parity="N", stopbits=1, timeout=1
+)
+
+dp_raw = client.read_holding_registers(address=3, count=1, slave=1)
+decimal_places = dp_raw.registers[0]
+print(f"Decimal places: {decimal_places}")
+
+unit_raw = client.read_holding_registers(address=14, count=1, slave=1)
+unit_mode = unit_raw.registers[0]
+print(f"Unit mode: {unit_mode}")
+
+last_time = time.time()
+
+
+def read_all_channels_block():
+    # Read 8 registers starting at 300 (40301) for 4 channels
+    result = client.read_holding_registers(address=300, count=8, slave=1)
+    if result.isError():
+        return None
+
+    # Convert each 32-bit value from result.registers
+    raw_values = []
+    for i in range(0, 8, 2):
+        val = client.convert_from_registers(
+            registers=result.registers[i : i + 2],
+            data_type=ModbusClientMixin.DATATYPE.INT32,
+            word_order="big",
+        )
+        raw_values.append(val)
+
+    return raw_values
+
+
+# Channel register map (40301–40308 => offsets 300–306)
+channels = {
+    "CH1": 300,
+    "CH2": 302,
+    "CH3": 304,
+    "CH4": 306,
+}
+
+client.connect()
+
+# Slope unit is in gramForce per raw value count    
+SLOPE = {"CH1": 0.000160217269343611, "CH2": 0.00015715760370146, "CH3": 0.000158163217397836, "CH4": 0.000160217269343611}  # measured zero values
+TARE = {"CH1": 4390912, "CH2": 3538944, "CH3": 4915200, "CH4": 3342336}  # measured zero values
+
+SENSOR_POSITIONS = {
+    "CH1": (176.662, 64.300),
+    "CH2": (64.300, -176.662),
+    "CH3": (-176.662,0  -64.300),
+    "CH4": (-64.300, 176.662),
+}
+
+# Constants
+canvas_size = 400
+center = (canvas_size // 2, canvas_size // 2)
+radius_max = 180  # mm
+scale = (canvas_size // 2 - 20) / radius_max  # mm to pixels
+
+trail = deque(maxlen=10)
+
+cv2.namedWindow("Weight Position (Polar View)", cv2.WINDOW_NORMAL)
+cv2.resizeWindow("Weight Position (Polar View)", 500, 500)
+
+# Prepare static background (grid + cross lines)
+def create_background():
+    bg = np.ones((canvas_size, canvas_size, 3), dtype=np.uint8) * 255
+
+    # Draw grid circles
+    for r_mm in range(30, radius_max + 1, 30):
+        r_px = int(r_mm * scale)
+        cv2.circle(bg, center, r_px, (200, 200, 200), 1)
+
+    # Draw cross lines
+    cv2.line(bg, (center[0], 0), (center[0], canvas_size), (180, 180, 180), 1)
+    cv2.line(bg, (0, center[1]), (canvas_size, center[1]), (180, 180, 180), 1)
+
+    return bg
+
+background_img = create_background()
+
+def update_cv_polar(angle_deg=None, radius_mm=None):
+    global trail
+    img = background_img.copy()  # Use pre-rendered background
+
+    # If valid position is provided
+    if angle_deg is not None and radius_mm is not None:
+        angle_rad = math.radians(angle_deg)
+        x = int(center[0] + radius_mm * scale * math.cos(angle_rad))
+        y = int(center[1] - radius_mm * scale * math.sin(angle_rad))
+        trail.append((x, y))
+    else:
+        if trail:
+            trail.popleft()
+
+    # Draw trail (blue)
+    for pt in list(trail):
+        cv2.circle(img, pt, 3, (255, 0, 0), -1)
+
+    # Draw current point (red) only if valid
+    if angle_deg is not None and radius_mm is not None:
+        cv2.circle(img, (x, y), 6, (0, 0, 255), -1)
+
+    cv2.imshow("Weight Position (Polar View)", img)
+    cv2.waitKey(1)
+
+# Motion Control code 
+prev_angle = None
+prev_time = time.time()
+angular_velocity_filtered = 0.0
+velocity_alpha = 0.3  # filtering factor (0 = slow, 1 = no filtering)
+
+
+try:
+    while True:
+        os.system("cls" if os.name == "nt" else "clear")
+        print("Live Load Cell Readout (kg):\n")
+        raw_values = read_all_channels_block()
+        weights = {}
+        if raw_values is None:
+            print("Modbus read error.")
+            continue
+
+        for ch_name, raw in zip(channels.keys(), raw_values):
+            zero = TARE.get(ch_name, 0)
+            slope = SLOPE.get(ch_name, 0)
+            kg = (raw - zero) * slope * 0.001
+            print(f"{ch_name}: {kg:8.3f} kg (raw: {raw})")
+            weights[ch_name] = kg
+
+        weighted_sum_x = sum(weights[ch] * SENSOR_POSITIONS[ch][0] for ch in weights)
+        weighted_sum_y = sum(weights[ch] * SENSOR_POSITIONS[ch][1] for ch in weights)
+        total = sum(weights.values())
+        print(f"\nTotal: {total:8.3f} kg")
+
+        # Calculate weighted average position
+        position_x = weighted_sum_x / total
+        position_y = weighted_sum_y / total
+        distance_from_center = math.sqrt(position_x**2 + position_y**2)
+        angle_from_x_axis = math.degrees(math.atan2(position_y, position_x))
+
+        # Normalize angle to [0, 360)
+        angle_from_x_axis = angle_from_x_axis % 360
+
+        # Compute time difference
+        current_time = time.time()
+        dt = current_time - prev_time
+        prev_time = current_time
+
+        if prev_angle is not None and dt > 0:
+            # Compute angular difference, handle wraparound
+            raw_diff = angle_from_x_axis - prev_angle
+            if raw_diff > 180:
+                raw_diff -= 360
+            elif raw_diff < -180:
+                raw_diff += 360
+
+            # Angular velocity in deg/sec
+            angular_velocity = raw_diff / dt
+
+            # Apply exponential smoothing filter
+            angular_velocity_filtered = (
+                velocity_alpha * angular_velocity +
+                (1 - velocity_alpha) * angular_velocity_filtered
+            )
+
+            print(f"Angular velocity: {angular_velocity_filtered:.2f} deg/s")
+
+        prev_angle = angle_from_x_axis
+
+        if total > 0.1:  # Ignore near-zero weight
+
+            print(f"Position X: {position_x:8.3f} mm , Y: {position_y:8.3f} mm")
+            print(f"Distance from center: {distance_from_center:8.3f} mm , Angle: {angle_from_x_axis:8.3f} degrees")
+            update_cv_polar(angle_from_x_axis, distance_from_center) # Update the display with the current position
+        else:
+            print("No significant weight detected.")
+            update_cv_polar() # Clear the display slowly
+
+        # Print update frequency
+        now = time.time()
+        dt = now - last_time
+        if dt > 0:
+            freq = 1.0 / dt
+            print(f"Update frequency: {freq:.2f} Hz")
+        last_time = now
+
+        time.sleep(0.001)
+
+except KeyboardInterrupt:
+    print("\nExiting...")
+finally:
+    client.close()
+    cv2.destroyAllWindows()
+
