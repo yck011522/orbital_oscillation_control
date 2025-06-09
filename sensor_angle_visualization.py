@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 from collections import deque
 import math
-
+import serial.tools.list_ports
 
 import time
 import os
@@ -10,9 +10,44 @@ import math
 from pymodbus.client import ModbusSerialClient
 from pymodbus.client.mixin import ModbusClientMixin
 
-client = ModbusSerialClient(
-    port="COM18", baudrate=38400, bytesize=8, parity="N", stopbits=1, timeout=1
-)
+
+
+def list_serial_ports():
+    return [port.device for port in serial.tools.list_ports.comports()]
+
+def find_modbus_device(baudrate=38400, test_slave_id=1, test_address=3, test_count=1):
+    for port in list_serial_ports():
+        try:
+            client = ModbusSerialClient(
+                port=port,
+                baudrate=baudrate,
+                bytesize=8,
+                parity='N',
+                stopbits=1,
+                timeout=1,
+            )
+            if client.connect():
+                # Try a simple Modbus read to check for valid response
+                result = client.read_holding_registers(address=test_address, count=test_count, slave=test_slave_id)
+                if result and not result.isError():
+                    print(f"✅ Found device on {port}")
+                    return client  # Return connected client
+                client.close()
+        except Exception as e:
+            print(f"⚠️ Failed on {port}: {e}")
+    print("❌ No Modbus device found.")
+    return None
+
+client = find_modbus_device()
+
+if not client:
+    print("Modbus client not initialized.")
+    exit(1)
+    
+# Uncomment the following line to use a specific port directly
+# client = ModbusSerialClient(
+#     port="COM18", baudrate=38400, bytesize=8, parity="N", stopbits=1, timeout=1
+# )
 
 dp_raw = client.read_holding_registers(address=3, count=1, slave=1)
 decimal_places = dp_raw.registers[0]
