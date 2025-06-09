@@ -17,7 +17,7 @@ def open_serial():
 
 
 def send_absolute_position_mm(ser, target_mm, address=1, direction=0x00, speed_rpm=200, acc=0x00):
-    assert 1 <= address <= 4, "Motor address must be between 1 and 4"
+    assert 0 <= address <= 4, "Motor address must be between 1 and 4"
     target_steps = int(round(target_mm * STEPS_PER_MM))
     speed_hi = (speed_rpm >> 8) & 0xFF
     speed_lo = speed_rpm & 0xFF
@@ -40,7 +40,7 @@ def send_absolute_position_mm(ser, target_mm, address=1, direction=0x00, speed_r
 
     if len(response) == 4 and response[0] == address and response[1] == 0xFD and response[3] == 0x6B:
         if response[2] == 0x02:
-            print(f"✅ Motor {address}: Move command accepted.")
+            print(f"✅ Motor {address}: Move command accepted to {target_mm:.2f} mm.")
         elif response[2] == 0xE2:
             print(f"⚠️ Motor {address}: Condition not met (maybe not enabled or blocked).")
         else:

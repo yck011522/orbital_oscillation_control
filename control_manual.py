@@ -25,7 +25,7 @@ target_azimuth = 0.0
 current_elevation = 0.0
 current_azimuth = 0.0
 
-speed_rpm = 150 # 180 would be quite quiet. 500 is the max speed of the motors
+speed_rpm = 200 # 180 would be quite quiet. 500 is the max speed of the motors
 
 # tuning
 actuator_value_offset = 0.0

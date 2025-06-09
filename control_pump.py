@@ -2,48 +2,31 @@ import cv2
 import numpy as np
 from collections import deque
 import math
-import serial.tools.list_ports
-
 import time
 import os
-import math
-from pymodbus.client import ModbusSerialClient
-from pymodbus.client.mixin import ModbusClientMixin
 
-from actuator_ik_table05 import create_actuator_lookup_function
+
 from motor_control import send_absolute_position_mm, open_serial, home_all_motors
 
-lookup_actuator_position = create_actuator_lookup_function()
+# Import sensor utilities and constants
+from sensor_utils import (
+    find_modbus_device,
+    read_all_channels_block,
+    channels,
+    SLOPE,
+    TARE,
+    SENSOR_POSITIONS,
+)
+
+from actuator_utils import (
+    actuator_length,
+    polar_to_tilt_components,
+    limit_change,
+    send_actuator_positions,
+)
 
 
-
-
-def list_serial_ports():
-    return [port.device for port in serial.tools.list_ports.comports()]
-
-def find_modbus_device(baudrate=38400, test_slave_id=1, test_address=3, test_count=1):
-    for port in list_serial_ports():
-        try:
-            client = ModbusSerialClient(
-                port=port,
-                baudrate=baudrate,
-                bytesize=8,
-                parity='N',
-                stopbits=1,
-                timeout=1,
-            )
-            if client.connect():
-                # Try a simple Modbus read to check for valid response
-                result = client.read_holding_registers(address=test_address, count=test_count, slave=test_slave_id)
-                if result and not result.isError():
-                    print(f"✅ Found device on {port}")
-                    return client  # Return connected client
-                client.close()
-        except Exception as e:
-            print(f"⚠️ Failed on {port}: {e}")
-    print("❌ No Modbus device found.")
-    return None
-
+# Connect to Modbus device
 client = find_modbus_device()
 
 if not client:
@@ -55,46 +38,7 @@ if not client:
 #     port="COM18", baudrate=38400, bytesize=8, parity="N", stopbits=1, timeout=1
 # )
 
-dp_raw = client.read_holding_registers(address=3, count=1, slave=1)
-decimal_places = dp_raw.registers[0]
-print(f"Decimal places: {decimal_places}")
-
-unit_raw = client.read_holding_registers(address=14, count=1, slave=1)
-unit_mode = unit_raw.registers[0]
-print(f"Unit mode: {unit_mode}")
-
 last_time = time.time()
-
-
-def read_all_channels_block():
-    # Read 8 registers starting at 300 (40301) for 4 channels
-    result = client.read_holding_registers(address=300, count=8, slave=1)
-    if result.isError():
-        return None
-
-    # Convert each 32-bit value from result.registers
-    raw_values = []
-    for i in range(0, 8, 2):
-        val = client.convert_from_registers(
-            registers=result.registers[i : i + 2],
-            data_type=ModbusClientMixin.DATATYPE.INT32,
-            word_order="big",
-        )
-        raw_values.append(val)
-
-    return raw_values
-
-
-# Channel register map (40301–40308 => offsets 300–306)
-channels = {
-    "CH1": 300,
-    "CH2": 302,
-    "CH3": 304,
-    "CH4": 306,
-}
-
-# Serial connection
-client.connect()
 
 # Serial connection for motor control
 ser = open_serial()
@@ -102,51 +46,32 @@ if not home_all_motors(ser, settle_position_mm=28.1):
     print("Homing failed. Exiting.")
     exit()
 
-
-# Slope unit is in gramForce per raw value count    
-SLOPE = {"CH1": 0.000160217269343611, "CH2": 0.00015715760370146, "CH3": 0.000158163217397836, "CH4": 0.000160217269343611}  # measured zero values
-TARE = {"CH1": 4390912, "CH2": 3538944, "CH3": 4915200, "CH4": 3342336}  # measured zero values
-
-SENSOR_POSITIONS = {
-    "CH1": (176.662, 64.300),
-    "CH2": (64.300, -176.662),
-    "CH3": (-176.662,0  -64.300),
-    "CH4": (-64.300, 176.662),
-}
-
 # OpenCV Constants
+
+# Global canvas and overlays
 canvas_size = 400
-center = (canvas_size // 2, canvas_size // 2)
-radius_max = 180  # mm
+radius_max = 180  # mm (adjustable later)
 scale = (canvas_size // 2 - 20) / radius_max  # mm to pixels
+center = (canvas_size // 2, canvas_size // 2)
+scale = (canvas_size // 2 - 20) / 180  # adjust radius_max as needed
+
+# Global elements
 trail = deque(maxlen=10)
+reversal_angles = deque(maxlen=2)  # store last two reversal points
 
-cv2.namedWindow("Weight Position (Polar View)", cv2.WINDOW_NORMAL)
-cv2.resizeWindow("Weight Position (Polar View)", 500, 500)
-
-# Prepare static background (grid + cross lines)
-def create_background():
-    bg = np.ones((canvas_size, canvas_size, 3), dtype=np.uint8) * 255
-
-    # Draw grid circles
-    for r_mm in range(30, radius_max + 1, 30):
+def create_base_canvas():
+    canvas = np.ones((canvas_size, canvas_size, 3), dtype=np.uint8) * 255
+    # Grid circles
+    for r_mm in range(30, 181, 30):
         r_px = int(r_mm * scale)
-        cv2.circle(bg, center, r_px, (200, 200, 200), 1)
+        cv2.circle(canvas, center, r_px, (200, 200, 200), 1)
+    # Cross lines
+    cv2.line(canvas, (center[0], 0), (center[0], canvas_size), (180, 180, 180), 1)
+    cv2.line(canvas, (0, center[1]), (canvas_size, center[1]), (180, 180, 180), 1)
+    return canvas
 
-    # Draw cross lines
-    cv2.line(bg, (center[0], 0), (center[0], canvas_size), (180, 180, 180), 1)
-    cv2.line(bg, (0, center[1]), (canvas_size, center[1]), (180, 180, 180), 1)
-
-    return bg
-
-background_img = create_background()
-
-def update_cv_polar(angle_deg=None, radius_mm=None, tilt_x=None, tilt_y=None):
-    global trail
-    img = background_img.copy()  # Use pre-rendered background
-
-    # If valid position is provided
-    if angle_deg is not None and radius_mm is not None:
+def draw_position_trail(img, angle_deg, radius_mm):
+    if angle_deg is not None:
         angle_rad = math.radians(angle_deg)
         x = int(center[0] + radius_mm * scale * math.cos(angle_rad))
         y = int(center[1] - radius_mm * scale * math.sin(angle_rad))
@@ -154,77 +79,75 @@ def update_cv_polar(angle_deg=None, radius_mm=None, tilt_x=None, tilt_y=None):
     else:
         if trail:
             trail.popleft()
-
-    # Draw trail (blue)
-    for pt in list(trail):
+    for pt in trail:
         cv2.circle(img, pt, 3, (255, 0, 0), -1)
-
-    # Draw current point (red) only if valid
-    if angle_deg is not None and radius_mm is not None:
+    if angle_deg is not None:
         cv2.circle(img, (x, y), 6, (0, 0, 255), -1)
 
-    # Draw tilt vector (red arrow), if provided
-    if tilt_x is not None and tilt_y is not None:
-        # Convert to pixel vector
-        dx = tilt_x * scale
-        dy = -tilt_y * scale  # negative because OpenCV y-axis goes down
-        tip = (int(center[0] + dx), int(center[1] + dy))
-        cv2.arrowedLine(img, center, tip, (0, 0, 255), 2, tipLength=0.2)
+def draw_control_vector(img, azimuth_deg, magnitude_deg):
+    length = int(magnitude_deg * scale * 50)  # scale factor
+    angle_rad = math.radians(azimuth_deg)
+    x2 = int(center[0] + length * math.cos(angle_rad))
+    y2 = int(center[1] - length * math.sin(angle_rad))
+    cv2.arrowedLine(img, center, (x2, y2), (0, 128, 0), 2, tipLength=0.2)
 
+def draw_reversal_markers(img):
+    for angle in reversal_angles:
+        angle_rad = math.radians(angle)
+        rx = int(center[0] + 180 * scale * math.cos(angle_rad))
+        ry = int(center[1] - 180 * scale * math.sin(angle_rad))
+        cv2.circle(img, (rx, ry), 6, (0, 0, 255), 2)
+        cv2.putText(img, f"{int(angle)}°", (rx+5, ry-5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
+        
+def render_frame(angle=None, radius=None, azimuth=None, magnitude=None):
+    img = create_base_canvas()
+    draw_position_trail(img, angle, radius)
+    if azimuth is not None and magnitude is not None:
+        draw_control_vector(img, azimuth, magnitude)
+    draw_reversal_markers(img)
     cv2.imshow("Weight Position (Polar View)", img)
     cv2.waitKey(1)
 
-# Table Control Variables
 
-P = 8.75  # mm
-alpha_deg = 7.766
-alpha_rad = np.radians(alpha_deg)
-max_elevation_deg = 1.2
-max_elevation_rad = np.radians(max_elevation_deg)
+# Table Control Variables
 actuator_value_offset = 0.0
 speed_rpm = 300
-
-
 # filter_rate_elevation = 0.002
 # filter_rate_azimuth = 0.5
-filter_rate_elevation = 0.01
-filter_rate_azimuth = 0.9
-target_elevation = 0.0
-target_azimuth = 0.0
-current_elevation = 0.0
-current_azimuth = 0.0
-
-
-def actuator_length(theta_eff):
-    return lookup_actuator_position(theta_eff)
-
-def polar_to_tilt_components(elevation, azimuth):
-    theta_x = np.arctan(np.tan(elevation) * np.cos(azimuth))
-    theta_y = - np.arctan(np.tan(elevation) * np.sin(azimuth))
-    return theta_x, theta_y
-
-def limit_change(current, target, rate):
-    delta = target - current
-    if abs(delta) > rate:
-        delta = rate * np.sign(delta)
-    return current + delta
+# filter_rate_elevation = 0.01
+# filter_rate_azimuth = 0.9
+# target_elevation = 0.0
+# target_azimuth = 0.0
+# current_elevation = 0.0
+# current_azimuth = 0.0
 
 
 # Motion Control Variables 
-prev_angle = None
 prev_time = time.time()
+prev_angle = None
+prev_velocity_filtered = None
 angular_velocity_filtered = 0.0
-velocity_alpha = 0.3  # filtering factor (0 = slow, 1 = no filtering)
+angular_acceleration = 0.0
+velocity_alpha = 0.2  # filtering factor (0 = slow, 1 = no filtering)
+acceleration_alpha = 0.2  # filtering factor for acceleration
 
-MAX_TILT_DEG = 1.0      # max tilt angle in degrees
+MAX_TILT_DEG = 1.2      # max tilt angle in degrees
 GAIN = 0.03           # maps deg/sec to tilt degrees
-DEAD_ZONE = 10        # deg/s: don't respond below this speed
+DEAD_ZONE = 2        # deg/s: don't respond below this speed
+lead_angle = 90  # degrees: lead angle for tilt direction
+
+
+angle_history = deque(maxlen=100)
+velocity_history = deque(maxlen=100)
+time_history = deque(maxlen=100)
+
 
 try:
     while True:
         os.system("cls" if os.name == "nt" else "clear")
         print("Live Load Cell Readout (kg):\n")
-        raw_values = read_all_channels_block()
+        raw_values = read_all_channels_block(client)
         weights = {}
         if raw_values is None:
             print("Modbus read error.")
@@ -274,20 +197,71 @@ try:
                 (1 - velocity_alpha) * angular_velocity_filtered
             )
 
-            print(f"Angular velocity: {angular_velocity_filtered:.2f} deg/s")
+            
+        # Store current angle for next cycle
         prev_angle = angle_from_x_axis
+        
+        # Calculate angular acceleration
+        if prev_velocity_filtered is not None and dt > 0:
+            angular_acceleration = (angular_velocity_filtered - prev_velocity_filtered) / dt
+            angular_acceleration_filtered = (
+                acceleration_alpha * angular_acceleration +
+                (1 - acceleration_alpha) * angular_acceleration
+            )
+        # Store current velocity for next cycle
+        prev_velocity_filtered = angular_velocity_filtered
 
-        # Skip control if not enough motion
+        print(f"Angular velocity: {angular_velocity_filtered:.2f} deg/s. Angular acceleration: {angular_acceleration:.2f} deg/s²")
+        
+        angle_history.append(angle_from_x_axis)
+        velocity_history.append(angular_velocity_filtered)
+        time_history.append(time.time())
+
+        if len(velocity_history) >= 3:
+            v1, v2, v3 = velocity_history[-3], velocity_history[-2], velocity_history[-1]
+            a1, a2, a3 = angle_history[-3], angle_history[-2], angle_history[-1]
+
+            # Detect zero-crossing (velocity sign change)
+            if v1 > 0 and v2 <= 0:
+                print(f"🔁 CW to CCW reversal at angle {a2:.1f}")
+                reversal_angles.append(a2)
+            elif v1 < 0 and v2 >= 0:
+                print(f"🔁 CCW to CW reversal at angle {a2:.1f}")
+
+            # Detect angular extrema (local maxima/minima)
+            if (a2 > a1 and a2 > a3) or (a2 < a1 and a2 < a3):
+                print(f"📍 Oscillation extremum at angle {a2:.1f}")
+
+        # # Skip control if not enough motion
+        # if abs(angular_velocity_filtered) < DEAD_ZONE:
+        #     tilt_magnitude = 0
+        #     tilt_azimuth = 0
+        # else:
+        #     # Limit tilt angle to MAX_TILT_DEG
+        #     tilt_magnitude = min(abs(angular_velocity_filtered) * GAIN, MAX_TILT_DEG)
+
+        #     # 90 deg lead based on direction
+        #     lead = lead_angle * math.copysign(1, angular_velocity_filtered)
+
+        #     tilt_azimuth = (angle_from_x_axis + lead) % 360
+        
+        # if angular_velocity_filtered < 0:
+        #     tilt_magnitude = 0
+        DEAD_ZONE = 0
         if abs(angular_velocity_filtered) < DEAD_ZONE:
             tilt_magnitude = 0
             tilt_azimuth = 0
         else:
             # Limit tilt angle to MAX_TILT_DEG
-            tilt_magnitude = min(abs(angular_velocity_filtered) * GAIN, MAX_TILT_DEG)
+            tilt_magnitude = min(abs(angular_acceleration) * GAIN, MAX_TILT_DEG)
 
             # 90 deg lead based on direction
-            lead = 90 * math.copysign(1, angular_velocity_filtered)
+            lead = lead_angle * math.copysign(1, angular_acceleration)
+
             tilt_azimuth = (angle_from_x_axis + lead) % 360
+
+        if angular_acceleration < 0:
+            tilt_magnitude = 0
 
         # Convert tilt azimuth to radians and calculate tilt vector components
         tilt_azimuth_rad = math.radians(tilt_azimuth)
@@ -298,12 +272,13 @@ try:
         # Set actuator target positions
         target_elevation = np.radians(tilt_magnitude)
         target_azimuth = np.radians(tilt_azimuth)
+        print(f"Target Elevation: {np.degrees(target_elevation):8.3f} degrees , Azimuth: {np.degrees(target_azimuth):8.3f} degrees")
 
         # Apply rate limiting filter
-        current_elevation = limit_change(current_elevation, target_elevation, filter_rate_elevation)
-        current_azimuth = limit_change(current_azimuth, target_azimuth, filter_rate_azimuth)
+        # current_elevation = limit_change(current_elevation, target_elevation, filter_rate_elevation)
+        # current_azimuth = limit_change(current_azimuth, target_azimuth, filter_rate_azimuth)
 
-        theta_x, theta_y = polar_to_tilt_components(current_elevation, current_azimuth)
+        theta_x, theta_y = polar_to_tilt_components(target_elevation, target_azimuth)
 
         L_x_plus  = actuator_length(theta_x) + actuator_value_offset
         L_x_minus = actuator_length(-theta_x) + actuator_value_offset
@@ -315,18 +290,16 @@ try:
         send_absolute_position_mm(ser, L_x_minus, 3, speed_rpm=speed_rpm)
         send_absolute_position_mm(ser, L_y_plus, 4, speed_rpm=speed_rpm)
 
-
         if total > 0.1:  # Ignore near-zero weight
             print(f"Position X: {position_x:8.3f} mm , Y: {position_y:8.3f} mm")
             print(f"Distance from center: {distance_from_center:8.3f} mm , Angle: {angle_from_x_axis:8.3f} degrees")
             # Update the display with the current position
-            update_cv_polar(angle_from_x_axis, distance_from_center, tilt_x*50, tilt_y*50)
+            # update_cv_polar(angle_from_x_axis, distance_from_center, tilt_x*50, tilt_y*50)
         else:
             print("No significant weight detected.")
-            # Clear the display slowly
-            update_cv_polar() 
+            # update_cv_polar() 
+        render_frame(angle_from_x_axis, distance_from_center, tilt_azimuth, tilt_magnitude)
 
-        # Print update frequency
         now = time.time()
         dt = now - last_time
         if dt > 0:
