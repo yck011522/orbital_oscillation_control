@@ -2,8 +2,10 @@ import numpy as np
 import cv2
 from actuator_ik_table05 import create_actuator_lookup_function
 lookup_actuator_position = create_actuator_lookup_function()
-from motor_control import send_absolute_position_mm, read_position_mm, open_serial
-
+from motor_control import send_absolute_position_mm
+from motor_control import read_position_mm
+from motor_control import open_serial
+from motor_control import home_all_motors
 
 # Constants
 P = 8.75  # distance from roller to ramp (in mm)
@@ -59,8 +61,13 @@ def mouse_event(event, x, y, flags, param):
 cv2.namedWindow("Tilt Control")
 cv2.setMouseCallback("Tilt Control", mouse_event)
 
+
 with open_serial() as ser:
-    
+    homing_success = home_all_motors(ser, settle_position_mm=28.1)
+    if not homing_success:
+        print("Homing failed. Exiting.")
+        exit()
+
     while True:
         # Apply rate limiting filter
         current_elevation = limit_change(current_elevation, target_elevation, filter_rate_elevation)
