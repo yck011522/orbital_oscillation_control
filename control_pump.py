@@ -6,7 +6,11 @@ import time
 import os
 
 
-from motor_control import send_absolute_position_mm, open_serial, home_all_motors
+from motor_control import (
+    send_absolute_position_mm,
+    open_serial,
+    home_all_motors
+)
 
 # Import sensor utilities and constants
 from sensor_utils import (
@@ -129,8 +133,8 @@ prev_angle = None
 prev_velocity_filtered = None
 angular_velocity_filtered = 0.0
 angular_acceleration = 0.0
-velocity_alpha = 0.2  # filtering factor (0 = slow, 1 = no filtering)
-acceleration_alpha = 0.2  # filtering factor for acceleration
+velocity_alpha = 0.1  # filtering factor (0 = slow, 1 = no filtering)
+acceleration_alpha = 0.1  # filtering factor for acceleration
 
 MAX_TILT_DEG = 1.2      # max tilt angle in degrees
 GAIN = 0.03           # maps deg/sec to tilt degrees
@@ -142,10 +146,19 @@ angle_history = deque(maxlen=100)
 velocity_history = deque(maxlen=100)
 time_history = deque(maxlen=100)
 
+def print_average_frequency(time_history, window_size=50):
+    if len(time_history) >= 2:
+        # Only use the latest `window_size` timestamps if available
+        times = list(time_history)[-window_size:]
+        if len(times) >= 2:
+            total_time = times[-1] - times[0]
+            avg_freq = (len(times) - 1) / total_time if total_time > 0 else 0
+            print(f"⏱ Average frequency over {len(times)} frames: {avg_freq:.2f} Hz")
+            
 
 try:
     while True:
-        os.system("cls" if os.name == "nt" else "clear")
+        # os.system("cls" if os.name == "nt" else "clear")
         print("Live Load Cell Readout (kg):\n")
         raw_values = read_all_channels_block(client)
         weights = {}
@@ -285,10 +298,11 @@ try:
         L_y_plus  = actuator_length(theta_y) + actuator_value_offset
         L_y_minus = actuator_length(-theta_y) + actuator_value_offset
 
-        send_absolute_position_mm(ser, L_x_plus, 1, speed_rpm=speed_rpm)
-        send_absolute_position_mm(ser, L_y_minus, 2, speed_rpm=speed_rpm)
-        send_absolute_position_mm(ser, L_x_minus, 3, speed_rpm=speed_rpm)
-        send_absolute_position_mm(ser, L_y_plus, 4, speed_rpm=speed_rpm)
+        wait_for_ack = False
+        send_absolute_position_mm(ser, L_x_plus, 1, speed_rpm=speed_rpm, wait_for_ack=wait_for_ack)
+        send_absolute_position_mm(ser, L_y_minus, 2, speed_rpm=speed_rpm, wait_for_ack=wait_for_ack)
+        send_absolute_position_mm(ser, L_x_minus, 3, speed_rpm=speed_rpm, wait_for_ack=wait_for_ack)
+        send_absolute_position_mm(ser, L_y_plus, 4, speed_rpm=speed_rpm, wait_for_ack=wait_for_ack)
 
         if total > 0.1:  # Ignore near-zero weight
             print(f"Position X: {position_x:8.3f} mm , Y: {position_y:8.3f} mm")
@@ -302,12 +316,10 @@ try:
 
         now = time.time()
         dt = now - last_time
-        if dt > 0:
-            freq = 1.0 / dt
-            print(f"Update frequency: {freq:.2f} Hz")
+        # Compute frequency of updates using last 10 time_history
+        print_average_frequency(time_history, window_size=50)
         last_time = now
 
-        time.sleep(0.001)
 
 except KeyboardInterrupt:
     print("\nExiting...")
