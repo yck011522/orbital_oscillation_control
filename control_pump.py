@@ -133,6 +133,9 @@ prev_angle = None
 prev_velocity_filtered = None
 angular_velocity_filtered = 0.0
 angular_acceleration = 0.0
+tilt_x_filtered = 0.0
+tilt_y_filtered = 0.0
+tilt_alpha = 0.1  # filtering factor for tilt angles
 velocity_alpha = 0.1  # filtering factor (0 = slow, 1 = no filtering)
 acceleration_alpha = 0.1  # filtering factor for acceleration
 
@@ -280,6 +283,8 @@ try:
         tilt_azimuth_rad = math.radians(tilt_azimuth)
         tilt_x = tilt_magnitude * math.cos(tilt_azimuth_rad)
         tilt_y = tilt_magnitude * math.sin(tilt_azimuth_rad)
+        tilt_x_filtered = tilt_alpha * tilt_x + (1 - tilt_alpha) * tilt_x_filtered
+        tilt_y_filtered = tilt_alpha * tilt_y + (1 - tilt_alpha) * tilt_y_filtered
         print(f"Tilt X: {tilt_x:8.3f} mm , Y: {tilt_y:8.3f} mm")
 
         # Set actuator target positions
