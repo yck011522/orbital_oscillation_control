@@ -1,7 +1,7 @@
 import serial.tools.list_ports
 from pymodbus.client import ModbusSerialClient
 from pymodbus.client.mixin import ModbusClientMixin
-
+import math
 channels = {
     "CH1": 300,
     "CH2": 302,
@@ -17,10 +17,14 @@ SLOPE = {
 }
 
 TARE = {
-    "CH1": 4390912,
-    "CH2": 3538944,
-    "CH3": 4915200,
-    "CH4": 3342336,
+    "CH1": 3604480,
+    "CH2": 28508160,
+    "CH3": 3932160,
+    "CH4": 28573696,
+    # "CH1": 4390912,
+    # "CH2": 3538944,
+    # "CH3": 4915200,
+    # "CH4": 3342336,
 }
 
 SENSOR_POSITIONS = {
@@ -80,3 +84,38 @@ def read_all_channels_block(client):
         raw_values.append(val)
 
     return raw_values
+
+def read_all_channels_weights_kg(client):
+    raw_values = read_all_channels_block(client)
+    if raw_values is None:
+        return None
+
+    weights = {}
+    for ch, raw in zip(channels.keys(), raw_values):
+        if raw is not None:
+            weight = (raw - TARE[ch]) * SLOPE[ch] * 0.001  # Convert to kg
+            weights[ch] = weight
+        else:
+            weights[ch] = None
+    return weights
+
+def read_cop_weight_position_angle_distance(weights):
+    if not weights:
+        return None, None, None, None
+
+    weighted_sum_x = sum(weights[ch] * SENSOR_POSITIONS[ch][0] for ch in weights)
+    weighted_sum_y = sum(weights[ch] * SENSOR_POSITIONS[ch][1] for ch in weights)
+    total_weight = sum(weights.values())
+
+    # Calculate weighted average position
+    position_x = weighted_sum_x / total_weight
+    position_y = weighted_sum_y / total_weight
+    cop_position = (position_x, position_y)
+
+    # Calculate weighted average position
+    position_x = weighted_sum_x / total_weight
+    position_y = weighted_sum_y / total_weight
+    distance = math.sqrt(position_x**2 + position_y**2)
+    angle_degrees = math.degrees(math.atan2(position_y, position_x))
+
+    return total_weight, cop_position, angle_degrees, distance
