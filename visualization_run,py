@@ -6,8 +6,8 @@ from visualization_thread import visualization_thread
 
 # =============================
 
-pose_est = PoseEstimator("sensor_recording/glass01.csv")
-# pose_est = PoseEstimator("sensor_recording/glass04.csv")
+# pose_est = PoseEstimator("sensor_recording/glass01.csv")
+pose_est = PoseEstimator("sensor_recording/glass02.csv")
 pose_est.start()
 
 vis_thread = threading.Thread(target=visualization_thread, args=(pose_est,))

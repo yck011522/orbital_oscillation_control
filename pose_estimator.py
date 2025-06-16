@@ -23,7 +23,7 @@ class PoseEstimator:
 
         # Acceleration filter
         self.filtered_acceleration = 0.0
-        self.acceleration_filter_tau = 0.01
+        self.acceleration_filter_tau = 0.1
         self.acceleration_filter_last_time = None
 
         self.state = {}

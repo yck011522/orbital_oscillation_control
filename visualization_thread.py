@@ -139,8 +139,8 @@ def visualization_thread(
             {
                 "field": "angle",
                 "label": "Angle",
-                "color": (255, 0, 0),
-                "bg_color": (255, 200, 200),
+                "color": (100, 0, 0),
+                "bg_color": (220, 200, 200),
                 "vmin": POS_RANGE[0],
                 "vmax": POS_RANGE[1],
                 "threshold": POS_JUMP_THRESHOLD,
@@ -148,8 +148,8 @@ def visualization_thread(
             {
                 "field": "velocity",
                 "label": "Velocity",
-                "color": (0, 150, 0),
-                "bg_color": (200, 255, 200),
+                "color": (0, 100, 0),
+                "bg_color": (200, 220, 200),
                 "vmin": VEL_RANGE[0],
                 "vmax": VEL_RANGE[1],
                 "threshold": VEL_JUMP_THRESHOLD,
@@ -157,8 +157,8 @@ def visualization_thread(
             {
                 "field": "acceleration",
                 "label": "Acceleration",
-                "color": (0, 0, 255),
-                "bg_color": (200, 200, 255),
+                "color": (0, 0, 100),
+                "bg_color": (200, 200, 220),
                 "vmin": ACC_RANGE[0],
                 "vmax": ACC_RANGE[1],
                 "threshold": ACC_JUMP_THRESHOLD,
@@ -238,6 +238,31 @@ def visualization_thread(
             cv2.putText(
                 time_img, label, label_pos, FONT, 0.6, TEXT_COLOR, 1, cv2.LINE_AA
             )
+
+        # === Draw vertical 1-second grid lines with labels ===
+        start_sec = int(t0)
+        end_sec = int(t_now)
+
+        for sec in range(start_sec, end_sec + 1):
+            x = t_to_x(sec)
+            if plot_margin <= x <= plot_margin + plot_w:
+                # Vertical grid line
+                cv2.line(
+                    time_img,
+                    (x, plot_margin),
+                    (x, plot_margin + plot_h),
+                    (50, 50, 50),
+                    1,
+                )
+
+                # Label: last 2 digits of seconds
+                sec_label = f"{sec % 100:02d}"  # e.g., "47", "03"
+                (tw, th), _ = cv2.getTextSize(sec_label, FONT, 0.4, 1)
+                label_pos = (x - tw // 2, plot_margin + plot_h + th - 30)
+
+                cv2.putText(
+                    time_img, sec_label, label_pos, FONT, 0.4, (0, 0, 0), 1, cv2.LINE_AA
+                )
 
         # === PASS 2: draw all data plots ===
         for i, cfg in enumerate(PLOT_FIELDS):
