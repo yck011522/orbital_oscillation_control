@@ -16,6 +16,7 @@ from motor_control import (
 from sensor_utils import (
     find_modbus_device,
     read_all_channels_block,
+    read_all_channels_weights_kg,
     channels,
     SLOPE,
     TARE,
@@ -163,18 +164,14 @@ try:
     while True:
         # os.system("cls" if os.name == "nt" else "clear")
         print("Live Load Cell Readout (kg):\n")
-        raw_values = read_all_channels_block(client)
-        weights = {}
-        if raw_values is None:
+        weights = read_all_channels_weights_kg(client)
+        if weights is None:
             print("Modbus read error.")
             continue
-
-        for ch_name, raw in zip(channels.keys(), raw_values):
-            zero = TARE.get(ch_name, 0)
-            slope = SLOPE.get(ch_name, 0)
-            kg = (raw - zero) * slope * 0.001
-            print(f"{ch_name}: {kg:8.3f} kg (raw: {raw})")
-            weights[ch_name] = kg
+        
+        # Print weights for all channel
+        for ch_name, kg in zip(weights.keys(), weights.values()):
+            print(f"{ch_name}: {kg:8.3f} kg ")
 
         weighted_sum_x = sum(weights[ch] * SENSOR_POSITIONS[ch][0] for ch in weights)
         weighted_sum_y = sum(weights[ch] * SENSOR_POSITIONS[ch][1] for ch in weights)
