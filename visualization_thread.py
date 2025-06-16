@@ -124,7 +124,7 @@ def visualization_thread(
         # Y-axis ranges (adjust these as needed)
         POS_RANGE = (-180, 180)  # degrees
         VEL_RANGE = (-150, 150)  # deg/sec
-        ACC_RANGE = (-500, 500)  # deg/sec²
+        ACC_RANGE = (-300, 300)  # deg/sec²
 
         # Discontinuity thresholds
         POS_JUMP_THRESHOLD = 50  # degrees
