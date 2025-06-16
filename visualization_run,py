@@ -1,0 +1,31 @@
+import threading
+import time
+from pose_estimator import PoseEstimator
+from visualization_thread import visualization_thread
+
+
+# =============================
+
+pose_est = PoseEstimator("sensor_recording/glass01.csv")
+# pose_est = PoseEstimator("sensor_recording/glass04.csv")
+pose_est.start()
+
+vis_thread = threading.Thread(target=visualization_thread, args=(pose_est,))
+vis_thread.start()
+
+# =============================
+
+# Wait until data is ready
+while not pose_est.is_ready():
+    time.sleep(0.01)
+
+# Run until data is exhausted
+while not pose_est.is_finished():
+    state = pose_est.get_latest_state()
+    print(
+        f"Timestamp: {state['timestamp']:.2f}, COP: ({state['cop_x']:.2f}, {state['cop_y']:.2f}), "
+        + f"θ: {state['angle']:.2f}, v: {state['velocity']:.2f}, a: {state['acceleration']:.2f}"
+    )
+    time.sleep(1 / 25.0)
+
+print("Control loop finished — sensor data exhausted.")

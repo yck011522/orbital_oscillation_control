@@ -1,0 +1,155 @@
+import threading
+import time
+from collections import deque
+import pandas as pd
+
+
+class PoseEstimator:
+    def __init__(self, csv_path, history_size=1000):
+        self.df = pd.read_csv(csv_path)
+        self.df_iter = self.df.iterrows()
+        self.start_time = None
+        self.start_wall_time = None
+
+        self.history = deque(maxlen=history_size)  # stores full state dicts
+        self.reversal_angles = deque(maxlen=10)
+        self.last_velocity = 0.0
+        self.last_reversal = None
+
+        # Velocity filter
+        self.filtered_velocity = 0.0
+        self.velocity_filter_tau = 0.05
+        self.velocity_filter_last_time = None
+
+        # Acceleration filter
+        self.filtered_acceleration = 0.0
+        self.acceleration_filter_tau = 0.01
+        self.acceleration_filter_last_time = None
+
+        self.state = {}
+        self.lock = threading.Lock()
+        self.stop_event = threading.Event()
+        self.ready_flag = threading.Event()  # <--- NEW
+        self.finished_flag = threading.Event()
+
+    def start(self):
+        self.start_time = self.df["Time (s)"].iloc[0]
+        self.start_wall_time = time.time()
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def stop(self):
+        self.stop_event.set()
+
+    def is_ready(self):
+        return self.ready_flag.is_set()  # <--- NEW
+
+    def get_latest_state(self):
+        with self.lock:
+            return self.state.copy()
+
+    def _run(self):
+        for idx, row in self.df_iter:
+            if self.stop_event.is_set():
+                break
+
+            sim_time = row["Time (s)"]
+            target_wall_time = self.start_wall_time + (sim_time - self.start_time)
+            while time.time() < target_wall_time:
+                time.sleep(0.001)
+
+            now = time.time()
+            angle = row["Angle (deg)"]
+
+            # Compute derived state
+            velocity = self._estimate_velocity()
+            acceleration = self._estimate_acceleration()
+
+            if self.last_velocity * velocity < 0:
+                self.last_reversal = angle
+                self.reversal_angles.append(angle)
+
+            self.last_velocity = velocity
+
+            # Construct full state dictionary
+            state_now = {
+                "timestamp": now,
+                "angle": angle,
+                "velocity": velocity,
+                "acceleration": acceleration,
+                "last_reversal_angle": self.last_reversal,
+                "total_weight": row["TotalWeight (kg)"],
+                "cop_x": row["COP_X (m)"],
+                "cop_y": row["COP_Y (m)"],
+            }
+
+            # Save to shared state and history
+            with self.lock:
+                self.state.update(state_now)
+                self.history.append(state_now)  # ✅ full snapshot stored
+
+            self.ready_flag.set()  # <--- Set flag after first update
+        self.finished_flag.set()  # <--- Set this when done
+
+    def _estimate_velocity(self, window=5):
+        if len(self.history) < window:
+            return 0.0
+
+        s0 = self.history[-window]
+        s1 = self.history[-1]
+        t0, a0 = s0["timestamp"], s0["angle"]
+        t1, a1 = s1["timestamp"], s1["angle"]
+        raw_velocity = (a1 - a0) / (t1 - t0 + 1e-6)
+
+        now = time.time()
+        dt_filter = (
+            now - self.velocity_filter_last_time
+            if self.velocity_filter_last_time
+            else 1e-3
+        )
+        self.velocity_filter_last_time = now
+        alpha = dt_filter / (self.velocity_filter_tau + dt_filter)
+        self.filtered_velocity = (
+            alpha * raw_velocity + (1 - alpha) * self.filtered_velocity
+        )
+
+        return self.filtered_velocity
+
+    def _estimate_acceleration(self, window=5):
+        if len(self.history) < window + 2:
+            return 0.0
+
+        # Get earlier and later windows for velocity estimation
+        s0 = self.history[-(window + 2)]
+        s1 = self.history[-window]
+
+        s2 = self.history[-window]
+        s3 = self.history[-1]
+
+        t0, a0 = s0["timestamp"], s0["angle"]
+        t1, a1 = s1["timestamp"], s1["angle"]
+        t2, a2 = s2["timestamp"], s2["angle"]
+        t3, a3 = s3["timestamp"], s3["angle"]
+
+        v0 = (a1 - a0) / (t1 - t0 + 1e-6)
+        v1 = (a3 - a2) / (t3 - t2 + 1e-6)
+        dt = t3 - t0
+
+        raw_acceleration = (v1 - v0) / (dt + 1e-6)
+
+        # Filter acceleration
+        now = time.time()
+        dt_filter = (
+            now - self.acceleration_filter_last_time
+            if self.acceleration_filter_last_time
+            else 1e-3
+        )
+        self.acceleration_filter_last_time = now
+        alpha = dt_filter / (self.acceleration_filter_tau + dt_filter)
+        self.filtered_acceleration = (
+            alpha * raw_acceleration + (1 - alpha) * self.filtered_acceleration
+        )
+
+        return self.filtered_acceleration
+
+    def is_finished(self):
+        return self.finished_flag.is_set()
