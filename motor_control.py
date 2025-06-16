@@ -72,9 +72,11 @@ def read_position_mm(ser, address=1):
 
 def motor_needs_homing(ser, motor_id, threshold_mm=0.05):
     pos = read_position_mm(ser, address=motor_id)
+    time.sleep(0.1) # Allow time for serial response
     if pos is None:
         print(f"Motor {motor_id}: unable to read position. Assuming it needs homing.")
-        return True
+        raise RuntimeError(f"Motor {motor_id}: failed to read position.")
+        # return True
     if abs(pos) < threshold_mm:
         print(f"Motor {motor_id}: position is {pos:.2f} mm — assumed unhomed.")
         return True
@@ -99,20 +101,20 @@ def home_all_motors(ser, home_speed_rpm=200, settle_position_mm=21.0, delay_afte
         # Trigger senseless homing: 0x9A + mode 0x02 + sync 0x00 + checksum 0x6B
         cmd = [motor_id, 0x9A, 0x02, 0x00, 0x6B]
         ser.write(bytes(cmd))
-        response = ser.read(4)
+        # response = ser.read(4)
 
-        if len(response) == 4 and response[0] == motor_id and response[1] == 0x9A and response[3] == 0x6B:
-            if response[2] == 0x02:
-                print(f"Motor {motor_id} homing started.")
-            elif response[2] == 0xE2:
-                print(f"Motor {motor_id} failed to start homing: condition not met.")
-                return False
-            else:
-                print(f"Motor {motor_id} returned unknown status: {response[2]:02X}")
-                return False
-        else:
-            print(f"Motor {motor_id} no or invalid response:", response)
-            return False
+        # if len(response) == 4 and response[0] == motor_id and response[1] == 0x9A and response[3] == 0x6B:
+        #     if response[2] == 0x02:
+        #         print(f"Motor {motor_id} homing started.")
+        #     elif response[2] == 0xE2:
+        #         print(f"Motor {motor_id} failed to start homing: condition not met.")
+        #         return False
+        #     else:
+        #         print(f"Motor {motor_id} returned unknown status: {response[2]:02X}")
+        #         return False
+        # else:
+        #     print(f"Motor {motor_id} no or invalid response:", response)
+        #     return False
 
         # Wait for motor to report it's done homing
         timeout = 30.0
