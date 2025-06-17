@@ -139,8 +139,8 @@ def visualization_thread(
             {
                 "field": "angle",
                 "label": "Angle",
-                "color": (100, 0, 0),
-                "bg_color": (220, 200, 200),
+                "color": (130, 0, 0),
+                "bg_color": (245, 230, 230),
                 "vmin": POS_RANGE[0],
                 "vmax": POS_RANGE[1],
                 "threshold": POS_JUMP_THRESHOLD,
@@ -148,8 +148,8 @@ def visualization_thread(
             {
                 "field": "velocity",
                 "label": "Velocity",
-                "color": (0, 100, 0),
-                "bg_color": (200, 220, 200),
+                "color": (0, 130, 0),
+                "bg_color": (230, 245, 230),
                 "vmin": VEL_RANGE[0],
                 "vmax": VEL_RANGE[1],
                 "threshold": VEL_JUMP_THRESHOLD,
@@ -157,8 +157,8 @@ def visualization_thread(
             {
                 "field": "acceleration",
                 "label": "Acceleration",
-                "color": (0, 0, 100),
-                "bg_color": (200, 200, 220),
+                "color": (0, 0, 130),
+                "bg_color": (230, 230, 245),
                 "vmin": ACC_RANGE[0],
                 "vmax": ACC_RANGE[1],
                 "threshold": ACC_JUMP_THRESHOLD,
@@ -262,6 +262,14 @@ def visualization_thread(
 
                 cv2.putText(
                     time_img, sec_label, label_pos, FONT, 0.4, (0, 0, 0), 1, cv2.LINE_AA
+                )
+
+        # Velocity Reversal markers
+        for t_reversal, _ in pose_estimator.reversal_times:
+            if t0 <= t_reversal <= t_now:
+                x = t_to_x(t_reversal)
+                cv2.line(
+                    time_img, (x, plot_margin), (x, plot_margin + plot_h), (0, 0, 0), 2
                 )
 
         # === PASS 2: draw all data plots ===

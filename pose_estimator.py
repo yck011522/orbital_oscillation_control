@@ -32,6 +32,10 @@ class PoseEstimator:
         self.ready_flag = threading.Event()  # <--- NEW
         self.finished_flag = threading.Event()
 
+        # Velocity reversal detection
+        self.reversal_times = deque(maxlen=20)  # stores tuples: (time, angle)
+        self.DEADBAND_THRESHOLD = 0.0  # mm/s
+
     def start(self):
         self.start_time = self.df["Time (s)"].iloc[0]
         self.start_wall_time = time.time()
@@ -63,6 +67,7 @@ class PoseEstimator:
             # Compute derived state
             velocity = self._estimate_velocity()
             acceleration = self._estimate_acceleration()
+            self._check_velocity_reversal()
 
             if self.last_velocity * velocity < 0:
                 self.last_reversal = angle
@@ -153,3 +158,32 @@ class PoseEstimator:
 
     def is_finished(self):
         return self.finished_flag.is_set()
+
+    def _check_velocity_reversal(self):
+        if len(self.history) < 2:
+            return
+
+        s_prev = self.history[-2]
+        s_curr = self.history[-1]
+
+        v_prev = s_prev.get("velocity", 0.0)
+        v_curr = s_curr.get("velocity", 0.0)
+
+        if v_prev * v_curr < 0:
+            if (
+                abs(v_prev) > self.DEADBAND_THRESHOLD
+                and abs(v_curr) > self.DEADBAND_THRESHOLD
+            ):
+                t_prev = s_prev["timestamp"]
+                t_curr = s_curr["timestamp"]
+
+                alpha = abs(v_prev) / (abs(v_prev) + abs(v_curr))
+                t_reversal = t_prev + alpha * (t_curr - t_prev)
+
+                angle_prev = s_prev.get("angle", 0.0)
+                angle_curr = s_curr.get("angle", 0.0)
+                angle_reversal = angle_prev + alpha * (angle_curr - angle_prev)
+
+                self.reversal_times.append((t_reversal, angle_reversal))
+                self.last_reversal_time = t_reversal
+                self.last_reversal_angle = angle_reversal
