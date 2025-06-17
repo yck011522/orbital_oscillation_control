@@ -23,7 +23,7 @@ class PoseEstimator:
 
         # Acceleration filter
         self.filtered_acceleration = 0.0
-        self.acceleration_filter_tau = 0.1
+        self.acceleration_filter_tau = 0.2
         self.acceleration_filter_last_time = None
 
         self.state = {}
@@ -95,6 +95,12 @@ class PoseEstimator:
             self.ready_flag.set()  # <--- Set flag after first update
         self.finished_flag.set()  # <--- Set this when done
 
+    def wrapped_angle_diff(self, a1, a0):
+        """Compute smallest angular difference (in degrees) considering wraparound at ±180°."""
+        diff = (a1 - a0 + 180) % 360 - 180
+        return diff
+
+
     def _estimate_velocity(self, window=5):
         if len(self.history) < window:
             return 0.0
@@ -103,7 +109,10 @@ class PoseEstimator:
         s1 = self.history[-1]
         t0, a0 = s0["timestamp"], s0["angle"]
         t1, a1 = s1["timestamp"], s1["angle"]
-        raw_velocity = (a1 - a0) / (t1 - t0 + 1e-6)
+
+        # Use wrapped angle difference
+        angle_delta = self.wrapped_angle_diff(a1, a0)
+        raw_velocity = angle_delta / (t1 - t0 + 1e-6)
 
         now = time.time()
         dt_filter = (
@@ -119,6 +128,7 @@ class PoseEstimator:
 
         return self.filtered_velocity
 
+
     def _estimate_acceleration(self, window=5):
         if len(self.history) < window + 2:
             return 0.0
@@ -126,7 +136,6 @@ class PoseEstimator:
         # Get earlier and later windows for velocity estimation
         s0 = self.history[-(window + 2)]
         s1 = self.history[-window]
-
         s2 = self.history[-window]
         s3 = self.history[-1]
 
@@ -135,13 +144,14 @@ class PoseEstimator:
         t2, a2 = s2["timestamp"], s2["angle"]
         t3, a3 = s3["timestamp"], s3["angle"]
 
-        v0 = (a1 - a0) / (t1 - t0 + 1e-6)
-        v1 = (a3 - a2) / (t3 - t2 + 1e-6)
+        # Use wrapped angle diffs for velocity estimates
+        v0 = self.wrapped_angle_diff(a1, a0) / (t1 - t0 + 1e-6)
+        v1 = self.wrapped_angle_diff(a3, a2) / (t3 - t2 + 1e-6)
         dt = t3 - t0
 
         raw_acceleration = (v1 - v0) / (dt + 1e-6)
 
-        # Filter acceleration
+        # Low-pass filter
         now = time.time()
         dt_filter = (
             now - self.acceleration_filter_last_time
@@ -156,6 +166,7 @@ class PoseEstimator:
 
         return self.filtered_acceleration
 
+
     def is_finished(self):
         return self.finished_flag.is_set()
 
@@ -168,22 +179,25 @@ class PoseEstimator:
 
         v_prev = s_prev.get("velocity", 0.0)
         v_curr = s_curr.get("velocity", 0.0)
+        
+        MIN_INTERVAL = 0.5  # seconds, adjust as needed
 
         if v_prev * v_curr < 0:
-            if (
-                abs(v_prev) > self.DEADBAND_THRESHOLD
-                and abs(v_curr) > self.DEADBAND_THRESHOLD
-            ):
-                t_prev = s_prev["timestamp"]
-                t_curr = s_curr["timestamp"]
+            t_prev = s_prev["timestamp"]
+            t_curr = s_curr["timestamp"]
 
-                alpha = abs(v_prev) / (abs(v_prev) + abs(v_curr))
-                t_reversal = t_prev + alpha * (t_curr - t_prev)
+            alpha = abs(v_prev) / (abs(v_prev) + abs(v_curr))
+            t_reversal = t_prev + alpha * (t_curr - t_prev)
 
-                angle_prev = s_prev.get("angle", 0.0)
-                angle_curr = s_curr.get("angle", 0.0)
-                angle_reversal = angle_prev + alpha * (angle_curr - angle_prev)
+            if self.reversal_times and (t_reversal - self.reversal_times[-1][0]) < MIN_INTERVAL:
+                # Too close to last reversal, skip
+                return
+            
+            angle_prev = s_prev.get("angle", 0.0)
+            angle_curr = s_curr.get("angle", 0.0)
+            angle_reversal = angle_prev + alpha * (angle_curr - angle_prev)
 
-                self.reversal_times.append((t_reversal, angle_reversal))
-                self.last_reversal_time = t_reversal
-                self.last_reversal_angle = angle_reversal
+            self.reversal_times.append((t_reversal, angle_reversal))
+            self.last_reversal_time = t_reversal
+            self.last_reversal_angle = angle_reversal
+            v_prev = s_prev.get("velocity", 0.0)  
