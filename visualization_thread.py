@@ -138,7 +138,7 @@ def visualization_thread(
         PLOT_FIELDS = [
             {
                 "field": "angle",
-                "label": "Angle",
+                "label": "Angle (degrees)",
                 "color": (130, 0, 0),
                 "bg_color": (245, 230, 230),
                 "vmin": POS_RANGE[0],
@@ -147,7 +147,7 @@ def visualization_thread(
             },
             {
                 "field": "velocity",
-                "label": "Velocity",
+                "label": "Velocity (degrees/s)",
                 "color": (0, 130, 0),
                 "bg_color": (230, 245, 230),
                 "vmin": VEL_RANGE[0],
@@ -156,7 +156,7 @@ def visualization_thread(
             },
             {
                 "field": "acceleration",
-                "label": "Acceleration",
+                "label": "Acceleration (degrees/s^2)",
                 "color": (0, 0, 130),
                 "bg_color": (230, 230, 245),
                 "vmin": ACC_RANGE[0],
@@ -239,6 +239,35 @@ def visualization_thread(
                 time_img, label, label_pos, FONT, 0.6, TEXT_COLOR, 1, cv2.LINE_AA
             )
 
+            # Draw vmin and vmax labels on right side
+            vmin_text = f"{int(round(cfg['vmin']))}"
+            vmax_text = f"{int(round(cfg['vmax']))}"
+
+
+            # Calculate text size for both
+            (vmin_w, vmin_h), _ = cv2.getTextSize(vmin_text, FONT, 0.5, 1)
+            (vmax_w, vmax_h), _ = cv2.getTextSize(vmax_text, FONT, 0.5, 1)
+
+            # Text positions
+            x_text = plot_margin + plot_w - 30  # right of the plot
+            y_vmax = top + vmax_h + 6
+            y_vmin = bottom - 6
+
+            # Draw text background rectangles
+            for txt, x, y, w, h in [
+                (vmax_text, x_text-vmax_w, y_vmax, vmax_w, vmax_h),
+                (vmin_text, x_text-vmin_w, y_vmin, vmin_w, vmin_h),
+            ]:
+                cv2.rectangle(
+                    time_img,
+                    (x - 2, y - h - 2),
+                    (x + w + 2, y + 2),
+                    cfg["bg_color"],
+                    -1,
+                )
+                cv2.putText(time_img, txt, (x, y), FONT, 0.5, TEXT_COLOR, 1, cv2.LINE_AA)
+
+
         # === Draw vertical 1-second grid lines with labels ===
         start_sec = int(t0)
         end_sec = int(t_now)
@@ -263,6 +292,7 @@ def visualization_thread(
                 cv2.putText(
                     time_img, sec_label, label_pos, FONT, 0.4, (0, 0, 0), 1, cv2.LINE_AA
                 )
+        
 
         # Velocity Reversal markers
         for t_reversal, _ in pose_estimator.reversal_times:
@@ -271,6 +301,49 @@ def visualization_thread(
                 cv2.line(
                     time_img, (x, plot_margin), (x, plot_margin + plot_h), (0, 0, 0), 2
                 )
+
+        # Draw reversal intervals in milliseconds
+        for i in range(1, len(pose_estimator.reversal_times)):
+            t1, _ = pose_estimator.reversal_times[i - 1]
+            t2, _ = pose_estimator.reversal_times[i]
+
+            if not (t0 <= t1 <= t_now and t0 <= t2 <= t_now):
+                continue  # Skip if both not visible
+
+            x1 = t_to_x(t1)
+            x2 = t_to_x(t2)
+            x_center = (x1 + x2) // 2
+
+            interval_ms = int((t2 - t1) * 1000)
+            text = f"{interval_ms:4d} ms"
+
+            # Text box styling
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.6
+            thickness = 2
+            text_color = (50, 50, 70)
+            text_size, _ = cv2.getTextSize(text, font, font_scale, thickness)
+            text_w, text_h = text_size
+
+            y_baseline = plot_margin + plot_h - 50  # Placement below the plot
+            padding = 10
+
+            outer_tl = (x_center - text_w // 2 - padding, y_baseline - text_h - padding)
+            outer_br = (x_center + text_w // 2 + padding, y_baseline + padding)
+
+            inner_tl = (outer_tl[0] + 2, outer_tl[1] + 2)
+            inner_br = (outer_br[0] - 2, outer_br[1] - 2)
+
+            # Draw outer red border
+            cv2.rectangle(time_img, outer_tl, outer_br, text_color, 2)
+
+            # Fill grey inner background
+            cv2.rectangle(time_img, inner_tl, inner_br, (230, 230, 230), -1)
+
+            # Draw text
+            text_pos = (x_center - text_w // 2, y_baseline)
+            cv2.putText(time_img, text, text_pos, font, font_scale, text_color, thickness)
+
 
         # === PASS 2: draw all data plots ===
         for i, cfg in enumerate(PLOT_FIELDS):
@@ -298,6 +371,7 @@ def visualization_thread(
 
         combined = np.hstack([polar_img, time_img])
         cv2.imshow("Pose Visualization", combined)
+        cv2.moveWindow("Pose Visualization", 50, 50)  # (x, y) screen coordinates
 
         if cv2.waitKey(1) == 27:
             break
