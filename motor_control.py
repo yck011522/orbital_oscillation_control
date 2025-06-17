@@ -16,8 +16,9 @@ def open_serial():
     return serial.Serial(SERIAL_PORT, BAUDRATE, timeout=0.1)
 
 
-def send_absolute_position_mm(ser, target_mm, address=1, direction=0x00, speed_rpm=200, acc=0x00, wait_for_ack=False):
+def send_absolute_position_mm(ser, target_mm, address=1, direction=0x00, speed_rpm=200, acc=0x00, soft_limit_min = 0.1, soft_limit_max = 49.0, wait_for_ack=False):
     assert 0 <= address <= 4, "Motor address must be between 1 and 4"
+    target_mm = max(min(target_mm, soft_limit_max), soft_limit_min)  # Apply soft limits
     target_steps = int(round(target_mm * STEPS_PER_MM))
     speed_hi = (speed_rpm >> 8) & 0xFF
     speed_lo = speed_rpm & 0xFF
@@ -85,14 +86,15 @@ def motor_needs_homing(ser, motor_id, threshold_mm=0.05):
 
 
 
-def home_all_motors(ser, home_speed_rpm=200, settle_position_mm=21.0, delay_after_move=1.0):
+def home_all_motors(ser, home_speed_rpm=200, settle_position_mm=21.0, delay_after_move=1.0, skip_if_homed=True):
     """
     Homes all four motors one by one and moves each to the predefined zero position.
     """
     for motor_id in range(1, 5):
-        if not motor_needs_homing(ser, motor_id):
-            print(f"Motor {motor_id}: already homed. Skipping.")
-            continue
+        if skip_if_homed:
+            if not motor_needs_homing(ser, motor_id):
+                print(f"Motor {motor_id}: already homed. Skipping.")
+                continue
 
         print(f"Motor {motor_id}: requires homing. Starting...")
 
@@ -101,6 +103,14 @@ def home_all_motors(ser, home_speed_rpm=200, settle_position_mm=21.0, delay_afte
         # Trigger senseless homing: 0x9A + mode 0x02 + sync 0x00 + checksum 0x6B
         cmd = [motor_id, 0x9A, 0x02, 0x00, 0x6B]
         ser.write(bytes(cmd))
+        time.sleep(0.2)
+        ser.write(bytes(cmd))
+        time.sleep(0.2)
+        ser.write(bytes(cmd))
+        time.sleep(0.2)
+
+        # Wait for response
+        # time.sleep(0.1)  # Allow time for serial response
         # response = ser.read(4)
 
         # if len(response) == 4 and response[0] == motor_id and response[1] == 0x9A and response[3] == 0x6B:
@@ -120,12 +130,14 @@ def home_all_motors(ser, home_speed_rpm=200, settle_position_mm=21.0, delay_afte
         timeout = 30.0
         poll_interval = 0.1
         elapsed = 0.0
-
+        
         while elapsed < timeout:
+            # Request homing status
             ser.write(bytes([motor_id, 0x3B, 0x6B]))  # read homing status
             status_response = ser.read(4)
             if len(status_response) == 4 and status_response[0] == motor_id and status_response[1] == 0x3B:
                 flags = status_response[2]
+                # 0x04 = homing in progress, 0x08 = homing failed
                 homing_done = (flags & 0x04) == 0 and (flags & 0x08) == 0
                 if homing_done:
                     print(f"Motor {motor_id} finished homing.")
