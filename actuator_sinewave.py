@@ -55,9 +55,9 @@ def print_average_frequency(time_history, window_size=50):
             print(f"⏱ Average frequency over {len(times)} frames: {avg_freq:.2f} Hz")
             
 tilt_azimuth  = 0.0  # Initial azimuth angle in degrees
-angular_velocity_degree_s = 50.0
-tilt_magnitude = 1.0 # Tilt magnitude in degrees
-actuator_value_offset = 1.0
+angular_velocity_degree_s = 60.0
+tilt_magnitude = 0.8 # Tilt magnitude in degrees
+actuator_value_offset = 0.5
 speed_rpm = 400
 
 try:
@@ -100,6 +100,7 @@ try:
         dt = now - last_time
         # Compute frequency of updates using last 10 time_history
         print_average_frequency(time_history, window_size=50)
+        time_history.append(now)
         last_time = now
 
 
