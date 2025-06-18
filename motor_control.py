@@ -1,5 +1,6 @@
 import serial
 import time
+import serial.tools.list_ports
 
 # === Mechanical Constants ===
 MICROSTEPS = 16
@@ -11,9 +12,23 @@ STEPS_PER_MM = STEPS_PER_REV / LEADSCREW_PITCH_MM  # = 1600
 SERIAL_PORT = 'COM19'
 BAUDRATE = 115200
 
+def list_serial_ports():
+    return ['/dev/ttyS0'] + [port.device for port in serial.tools.list_ports.comports()]
 
 def open_serial():
-    return serial.Serial(SERIAL_PORT, BAUDRATE, timeout=0.1)
+    for port in list_serial_ports():
+        try:
+            ser = serial.Serial(port, BAUDRATE, timeout=0.1)
+            if not read_position_mm(ser):
+                print(f"⚠️ Failed on {port}, cannot read position.")
+                continue
+            return ser
+        except Exception as e:
+            print(f"⚠️ Failed on {port}: {e}")
+        
+        print("❌ No Motor Serial device found.")
+        return None
+
 
 
 def send_absolute_position_mm(ser, target_mm, address=1, direction=0x00, speed_rpm=200, acc=0x00, soft_limit_min = 0.1, soft_limit_max = 49.0, wait_for_ack=False):
@@ -157,6 +172,7 @@ def home_all_motors(ser, home_speed_rpm=200, settle_position_mm=21.0, delay_afte
 
 
 if __name__ == "__main__":
-
+    ports = list_serial_ports()
+    print(ports)
     with open_serial() as ser:
         home_all_motors(ser)
