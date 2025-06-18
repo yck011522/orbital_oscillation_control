@@ -16,3 +16,8 @@ ls /dev
 ```
 
 RS485 hat should appear as ttySC0 and ttySC1 
+
+Update frequency with everything on:
+- Actuator Output = 80Hz 
+- Sensor Input (With Visualization in loop) = 35Hz 
+- Sensor Input = 60Hz
