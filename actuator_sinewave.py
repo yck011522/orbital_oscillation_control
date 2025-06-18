@@ -59,6 +59,11 @@ angular_velocity_degree_s = 60.0
 tilt_magnitude = 0.8 # Tilt magnitude in degrees
 actuator_value_offset = 0.5
 speed_rpm = 400
+prev_positions = {1: None, 2: None, 3: None, 4: None}
+
+def mm_per_s_to_rpm(v_mm_s, pitch_mm=2.0):
+    return abs(v_mm_s * 60 / pitch_mm)  # rpm always positive
+
 
 try:
     while True:
@@ -89,10 +94,36 @@ try:
         L_y_minus = actuator_length(-theta_y) + actuator_value_offset
 
         wait_for_ack = False
-        send_absolute_position_mm(ser, L_x_plus, 1, speed_rpm=speed_rpm, wait_for_ack=wait_for_ack)
-        send_absolute_position_mm(ser, L_y_minus, 2, speed_rpm=speed_rpm, wait_for_ack=wait_for_ack)
-        send_absolute_position_mm(ser, L_x_minus, 3, speed_rpm=speed_rpm, wait_for_ack=wait_for_ack)
-        send_absolute_position_mm(ser, L_y_plus, 4, speed_rpm=speed_rpm, wait_for_ack=wait_for_ack)
+        # send_absolute_position_mm(ser, L_x_plus, 1, speed_rpm=speed_rpm, wait_for_ack=wait_for_ack)
+        # send_absolute_position_mm(ser, L_y_minus, 2, speed_rpm=speed_rpm, wait_for_ack=wait_for_ack)
+        # send_absolute_position_mm(ser, L_x_minus, 3, speed_rpm=speed_rpm, wait_for_ack=wait_for_ack)
+        # send_absolute_position_mm(ser, L_y_plus, 4, speed_rpm=speed_rpm, wait_for_ack=wait_for_ack)
+
+        # Estimate velocity and convert to RPM for each actuator
+        current_positions = {
+            1: L_x_plus,
+            2: L_y_minus,
+            3: L_x_minus,
+            4: L_y_plus
+        }
+
+        estimated_rpm = {}
+        for motor_id, pos in current_positions.items():
+            prev_pos = prev_positions[motor_id]
+            if prev_pos is not None and dt > 0:
+                velocity_mm_s = (pos - prev_pos) / dt
+                estimated_rpm[motor_id] = int(min(mm_per_s_to_rpm(velocity_mm_s), 1000))  # clamp
+            else:
+                estimated_rpm[motor_id] = speed_rpm  # fallback to fixed speed
+
+        # Send positions with dynamic speed
+        send_absolute_position_mm(ser, L_x_plus, 1, speed_rpm=estimated_rpm[1], wait_for_ack=wait_for_ack)
+        send_absolute_position_mm(ser, L_y_minus, 2, speed_rpm=estimated_rpm[2], wait_for_ack=wait_for_ack)
+        send_absolute_position_mm(ser, L_x_minus, 3, speed_rpm=estimated_rpm[3], wait_for_ack=wait_for_ack)
+        send_absolute_position_mm(ser, L_y_plus, 4, speed_rpm=estimated_rpm[4], wait_for_ack=wait_for_ack)
+
+        # Update previous positions
+        prev_positions = current_positions
 
         print (f"Actuator Positions: L_x_plus={L_x_plus:.2f}, L_y_minus={L_y_minus:.2f}, L_x_minus={L_x_minus:.2f}, L_y_plus={L_y_plus:.2f}")
 
