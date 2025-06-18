@@ -2,13 +2,21 @@ import threading
 import time
 from pose_estimator import PoseEstimator
 from visualization_thread import visualization_thread
-
+# from controller import Controller
 
 # =============================
 # input("Press Enter to start the pose estimation and visualization...")
+
+# Input thread
 pose_est = PoseEstimator("sensor_recording/glass03.csv")
 pose_est.start()
 
+# Control and output thread
+# controller = Controller(pose_est)
+# controller.start()
+
+# Visualization thread
+# vis_thread = threading.Thread(target=visualization_thread, args=(pose_est, controller))
 vis_thread = threading.Thread(target=visualization_thread, args=(pose_est,))
 vis_thread.start()
 
