@@ -55,11 +55,12 @@ def print_average_frequency(time_history, window_size=50):
             print(f"⏱ Average frequency over {len(times)} frames: {avg_freq:.2f} Hz")
             
 tilt_azimuth  = 0.0  # Initial azimuth angle in degrees
-angular_velocity_degree_s = 60.0
-tilt_magnitude = 0.8 # Tilt magnitude in degrees
+angular_velocity_degree_s = 120.0
+tilt_magnitude = 0.5 # Tilt magnitude in degrees
 actuator_value_offset = 0.5
 speed_rpm = 400
 prev_positions = {1: None, 2: None, 3: None, 4: None}
+speed_adjustment = 1.0
 
 def mm_per_s_to_rpm(v_mm_s, pitch_mm=2.0):
     return abs(v_mm_s * 60 / pitch_mm)  # rpm always positive
@@ -112,7 +113,7 @@ try:
             prev_pos = prev_positions[motor_id]
             if prev_pos is not None and dt > 0:
                 velocity_mm_s = (pos - prev_pos) / dt
-                estimated_rpm[motor_id] = int(min(mm_per_s_to_rpm(velocity_mm_s), 1000))  # clamp
+                estimated_rpm[motor_id] = int(min(mm_per_s_to_rpm(velocity_mm_s) * speed_adjustment, 1000))  # clamp
             else:
                 estimated_rpm[motor_id] = speed_rpm  # fallback to fixed speed
 
@@ -126,6 +127,7 @@ try:
         prev_positions = current_positions
 
         print (f"Actuator Positions: L_x_plus={L_x_plus:.2f}, L_y_minus={L_y_minus:.2f}, L_x_minus={L_x_minus:.2f}, L_y_plus={L_y_plus:.2f}")
+        print (f"Estimated RPM: 1 ={estimated_rpm[1]}, 2={estimated_rpm[2]}, 3={estimated_rpm[3]}, 4={estimated_rpm[4]}")
 
         now = time.time()
         dt = now - last_time
