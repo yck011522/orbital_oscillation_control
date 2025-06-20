@@ -2,6 +2,8 @@ import serial.tools.list_ports
 from pymodbus.client import ModbusSerialClient
 from pymodbus.client.mixin import ModbusClientMixin
 import math
+import time
+
 channels = {
     "CH1": 300,
     "CH2": 302,
@@ -34,8 +36,10 @@ SENSOR_POSITIONS = {
     "CH4": (-64.300, 176.662),
 }
 
+
 def list_serial_ports():
     return [port.device for port in serial.tools.list_ports.comports()]
+
 
 def find_modbus_device(baudrate=38400, test_slave_id=1, test_address=3, test_count=1):
     for port in list_serial_ports():
@@ -44,12 +48,14 @@ def find_modbus_device(baudrate=38400, test_slave_id=1, test_address=3, test_cou
                 port=port,
                 baudrate=baudrate,
                 bytesize=8,
-                parity='N',
+                parity="N",
                 stopbits=1,
                 timeout=1,
             )
             if client.connect():
-                result = client.read_holding_registers(address=test_address, count=test_count, slave=test_slave_id)
+                result = client.read_holding_registers(
+                    address=test_address, count=test_count, slave=test_slave_id
+                )
                 if result and not result.isError():
 
                     print(f"✅ Found device on {port}")
@@ -57,17 +63,20 @@ def find_modbus_device(baudrate=38400, test_slave_id=1, test_address=3, test_cou
                     decimal_places = dp_raw.registers[0]
                     print(f"Decimal places: {decimal_places}")
 
-                    unit_raw = client.read_holding_registers(address=14, count=1, slave=1)
+                    unit_raw = client.read_holding_registers(
+                        address=14, count=1, slave=1
+                    )
                     unit_mode = unit_raw.registers[0]
                     print(f"Unit mode: {unit_mode}")
-                    
+
                     return client
                 client.close()
         except Exception as e:
             print(f"⚠️ Failed on {port}: {e}")
-    print("❌ No Modbus device found.")  
+    print("❌ No Modbus device found.")
 
     return None
+
 
 def read_all_channels_block(client):
     result = client.read_holding_registers(address=300, count=8, slave=1)
@@ -85,6 +94,7 @@ def read_all_channels_block(client):
 
     return raw_values
 
+
 def read_all_channels_weights_kg(client):
     raw_values = read_all_channels_block(client)
     if raw_values is None:
@@ -98,6 +108,7 @@ def read_all_channels_weights_kg(client):
         else:
             weights[ch] = None
     return weights
+
 
 def read_cop_weight_position_angle_distance(weights):
     if not weights:
@@ -119,3 +130,45 @@ def read_cop_weight_position_angle_distance(weights):
     angle_degrees = math.degrees(math.atan2(position_y, position_x))
 
     return total_weight, cop_position, angle_degrees, distance
+
+
+def sensor_data_stream():
+    client = find_modbus_device()
+
+    if not client:
+        print("Modbus client not initialized.")
+        return
+
+    client.connect()
+
+    # Optionally read config info
+    try:
+        dp_raw = client.read_holding_registers(address=3, count=1, slave=1)
+        unit_raw = client.read_holding_registers(address=14, count=1, slave=1)
+        print(f"Decimal places: {dp_raw.registers[0]}")
+        print(f"Unit mode: {unit_raw.registers[0]}")
+    except Exception as e:
+        print(f"Warning: failed to read config: {e}")
+
+    try:
+        while True:
+            weights = read_all_channels_weights_kg(client)
+            total_weight, cop_position, angle_degrees, distance = (
+                read_cop_weight_position_angle_distance(weights)
+            )
+
+            # Optional filtering logic
+            if total_weight < 0.1:
+                continue  # Ignore noise / no object
+
+            yield None, {
+                "Time (s)": time.time(),
+                "Angle (deg)": angle_degrees,
+                "TotalWeight (kg)": total_weight,
+                "COP_X (m)": cop_position[0] / 1000.0,  # convert mm to meters
+                "COP_Y (m)": cop_position[1] / 1000.0,
+            }
+
+            time.sleep(0.04)  # ~25 Hz
+    finally:
+        client.close()

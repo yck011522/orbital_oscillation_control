@@ -130,6 +130,7 @@ def visualization_thread(
         POS_JUMP_THRESHOLD = 50  # degrees
         VEL_JUMP_THRESHOLD = 80  # deg/sec
         ACC_JUMP_THRESHOLD = 200  # deg/sec²
+        PHASE_JUMP_THRESHOLD = 0.6  # large enough to skip across reset at reversal
 
         # === RIGHT PANEL: Time History ===
 
@@ -162,6 +163,15 @@ def visualization_thread(
                 "vmin": ACC_RANGE[0],
                 "vmax": ACC_RANGE[1],
                 "threshold": ACC_JUMP_THRESHOLD,
+            },
+            {
+                "field": "phase",
+                "label": "Phase",
+                "vmin": 0.0,
+                "vmax": 1.0,
+                "bg_color": (240, 240, 240),
+                "color": (0, 0, 255),
+                "threshold": PHASE_JUMP_THRESHOLD,
             },
         ]
         # --- Right panel plot setup ---
@@ -243,7 +253,6 @@ def visualization_thread(
             vmin_text = f"{int(round(cfg['vmin']))}"
             vmax_text = f"{int(round(cfg['vmax']))}"
 
-
             # Calculate text size for both
             (vmin_w, vmin_h), _ = cv2.getTextSize(vmin_text, FONT, 0.5, 1)
             (vmax_w, vmax_h), _ = cv2.getTextSize(vmax_text, FONT, 0.5, 1)
@@ -255,8 +264,8 @@ def visualization_thread(
 
             # Draw text background rectangles
             for txt, x, y, w, h in [
-                (vmax_text, x_text-vmax_w, y_vmax, vmax_w, vmax_h),
-                (vmin_text, x_text-vmin_w, y_vmin, vmin_w, vmin_h),
+                (vmax_text, x_text - vmax_w, y_vmax, vmax_w, vmax_h),
+                (vmin_text, x_text - vmin_w, y_vmin, vmin_w, vmin_h),
             ]:
                 cv2.rectangle(
                     time_img,
@@ -265,8 +274,9 @@ def visualization_thread(
                     cfg["bg_color"],
                     -1,
                 )
-                cv2.putText(time_img, txt, (x, y), FONT, 0.5, TEXT_COLOR, 1, cv2.LINE_AA)
-
+                cv2.putText(
+                    time_img, txt, (x, y), FONT, 0.5, TEXT_COLOR, 1, cv2.LINE_AA
+                )
 
         # === Draw vertical 1-second grid lines with labels ===
         start_sec = int(t0)
@@ -292,7 +302,6 @@ def visualization_thread(
                 cv2.putText(
                     time_img, sec_label, label_pos, FONT, 0.4, (0, 0, 0), 1, cv2.LINE_AA
                 )
-        
 
         # Velocity Reversal markers
         for t_reversal, _ in pose_estimator.reversal_times:
@@ -342,8 +351,9 @@ def visualization_thread(
 
             # Draw text
             text_pos = (x_center - text_w // 2, y_baseline)
-            cv2.putText(time_img, text, text_pos, font, font_scale, text_color, thickness)
-
+            cv2.putText(
+                time_img, text, text_pos, font, font_scale, text_color, thickness
+            )
 
         # === PASS 2: draw all data plots ===
         for i, cfg in enumerate(PLOT_FIELDS):

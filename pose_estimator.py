@@ -5,23 +5,17 @@ import pandas as pd
 
 
 class PoseEstimator:
-    def __init__(self, csv_path, history_size=1000):
-        self.df = pd.read_csv(csv_path)
-        self.df_iter = self.df.iterrows()
-        self.start_time = None
-        self.start_wall_time = None
-
-        self.history = deque(maxlen=history_size)  # stores full state dicts
+    def __init__(self, source, history_size=1000):
+        self.history = deque(maxlen=history_size)
         self.reversal_angles = deque(maxlen=10)
         self.last_velocity = 0.0
         self.last_reversal = None
 
-        # Velocity filter
+        # Filters
         self.filtered_velocity = 0.0
         self.velocity_filter_tau = 0.05
         self.velocity_filter_last_time = None
 
-        # Acceleration filter
         self.filtered_acceleration = 0.0
         self.acceleration_filter_tau = 0.2
         self.acceleration_filter_last_time = None
@@ -29,16 +23,25 @@ class PoseEstimator:
         self.state = {}
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
-        self.ready_flag = threading.Event()  # <--- NEW
+        self.ready_flag = threading.Event()
         self.finished_flag = threading.Event()
 
-        # Velocity reversal detection
-        self.reversal_times = deque(maxlen=20)  # stores tuples: (time, angle)
-        self.DEADBAND_THRESHOLD = 0.0  # mm/s
+        self.reversal_times = deque(maxlen=20)
+        self.DEADBAND_THRESHOLD = 0.0
+
+        # Handle source
+        if isinstance(source, str):
+            self.mode = "csv"
+            self.df = pd.read_csv(source)
+            self.df_iter = self.df.iterrows()
+        else:
+            self.mode = "stream"
+            self.data_stream = source
 
     def start(self):
-        self.start_time = self.df["Time (s)"].iloc[0]
-        self.start_wall_time = time.time()
+        if self.mode == "csv":
+            self.start_time = self.df["Time (s)"].iloc[0]
+            self.start_wall_time = time.time()
         threading.Thread(target=self._run, daemon=True).start()
 
     def stop(self):
@@ -52,54 +55,74 @@ class PoseEstimator:
             return self.state.copy()
 
     def _run(self):
-        for idx, row in self.df_iter:
-            if self.stop_event.is_set():
-                break
+        if self.mode == "csv":
+            for idx, row in self.df_iter:
+                if self.stop_event.is_set():
+                    break
 
-            sim_time = row["Time (s)"]
-            target_wall_time = self.start_wall_time + (sim_time - self.start_time)
-            while time.time() < target_wall_time:
-                time.sleep(0.001)
+                sim_time = row["Time (s)"]
+                target_wall_time = self.start_wall_time + (sim_time - self.start_time)
+                while time.time() < target_wall_time:
+                    time.sleep(0.001)
 
-            now = time.time()
-            angle = row["Angle (deg)"]
+                self._process_row(
+                    {
+                        "angle": row["Angle (deg)"],
+                        "cop_x": row["COP_X (m)"],
+                        "cop_y": row["COP_Y (m)"],
+                        "total_weight": row["TotalWeight (kg)"],
+                    }
+                )
 
-            # Compute derived state
-            velocity = self._estimate_velocity()
-            acceleration = self._estimate_acceleration()
-            self._check_velocity_reversal()
+            self.finished_flag.set()
 
-            if self.last_velocity * velocity < 0:
-                self.last_reversal = angle
-                self.reversal_angles.append(angle)
+        elif self.mode == "stream":
+            for _, row in self.data_stream:
+                if self.stop_event.is_set():
+                    break
 
-            self.last_velocity = velocity
+                self._process_row(row)
 
-            # Construct full state dictionary
-            state_now = {
-                "timestamp": now,
-                "angle": angle,
-                "velocity": velocity,
-                "acceleration": acceleration,
-                "last_reversal_angle": self.last_reversal,
-                "total_weight": row["TotalWeight (kg)"],
-                "cop_x": row["COP_X (m)"],
-                "cop_y": row["COP_Y (m)"],
-            }
+    def _process_row(self, row):
+        now = time.time()
+        angle = row["angle"]
 
-            # Save to shared state and history
-            with self.lock:
-                self.state.update(state_now)
-                self.history.append(state_now)  # ✅ full snapshot stored
+        velocity = self._estimate_velocity()
+        acceleration = self._estimate_acceleration()
+        self._check_velocity_reversal()
 
-            self.ready_flag.set()  # <--- Set flag after first update
-        self.finished_flag.set()  # <--- Set this when done
+        if self.last_velocity * velocity < 0:
+            self.last_reversal = angle
+            self.reversal_angles.append(angle)
+
+        self.last_velocity = velocity
+
+        phase = self.get_phase()
+        direction = self.get_direction()
+
+        state_now = {
+            "timestamp": now,
+            "angle": angle,
+            "velocity": velocity,
+            "acceleration": acceleration,
+            "last_reversal_angle": self.last_reversal,
+            "total_weight": row["total_weight"],
+            "cop_x": row["cop_x"],
+            "cop_y": row["cop_y"],
+            "phase": phase,
+            "direction_positive": direction,
+        }
+
+        with self.lock:
+            self.state.update(state_now)
+            self.history.append(state_now)
+
+        self.ready_flag.set()
 
     def wrapped_angle_diff(self, a1, a0):
         """Compute smallest angular difference (in degrees) considering wraparound at ±180°."""
         diff = (a1 - a0 + 180) % 360 - 180
         return diff
-
 
     def _estimate_velocity(self, window=5):
         if len(self.history) < window:
@@ -127,7 +150,6 @@ class PoseEstimator:
         )
 
         return self.filtered_velocity
-
 
     def _estimate_acceleration(self, window=5):
         if len(self.history) < window + 2:
@@ -166,7 +188,6 @@ class PoseEstimator:
 
         return self.filtered_acceleration
 
-
     def is_finished(self):
         return self.finished_flag.is_set()
 
@@ -179,7 +200,7 @@ class PoseEstimator:
 
         v_prev = s_prev.get("velocity", 0.0)
         v_curr = s_curr.get("velocity", 0.0)
-        
+
         MIN_INTERVAL = 0.5  # seconds, adjust as needed
 
         if v_prev * v_curr < 0:
@@ -189,10 +210,13 @@ class PoseEstimator:
             alpha = abs(v_prev) / (abs(v_prev) + abs(v_curr))
             t_reversal = t_prev + alpha * (t_curr - t_prev)
 
-            if self.reversal_times and (t_reversal - self.reversal_times[-1][0]) < MIN_INTERVAL:
+            if (
+                self.reversal_times
+                and (t_reversal - self.reversal_times[-1][0]) < MIN_INTERVAL
+            ):
                 # Too close to last reversal, skip
                 return
-            
+
             angle_prev = s_prev.get("angle", 0.0)
             angle_curr = s_curr.get("angle", 0.0)
             angle_reversal = angle_prev + alpha * (angle_curr - angle_prev)
@@ -200,4 +224,32 @@ class PoseEstimator:
             self.reversal_times.append((t_reversal, angle_reversal))
             self.last_reversal_time = t_reversal
             self.last_reversal_angle = angle_reversal
-            v_prev = s_prev.get("velocity", 0.0)  
+            v_prev = s_prev.get("velocity", 0.0)
+
+    def get_phase(self):
+        """
+        Returns:
+            phase (float): between 0.0 and 1.0
+        """
+        if len(self.reversal_times) < 2:
+            return 0.0
+
+        now = time.time()
+        t_prev, _ = self.reversal_times[-2]
+        t_curr, _ = self.reversal_times[-1]
+
+        half_period = t_curr - t_prev
+        if half_period < 1e-6:
+            return 0.0
+
+        t_since_last = now - t_curr
+        phase = t_since_last / half_period
+
+        return min(1.0, max(0.0, phase))  # clamp to [0,1]
+
+    def get_direction(self):
+        """
+        Returns:
+            True if moving in positive direction, False if negative.
+        """
+        return self.state.get("velocity", 0.0) > 0
