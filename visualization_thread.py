@@ -136,6 +136,13 @@ def visualization_thread(
 
         # --- Right panel layout setup ---
 
+        MOTION_STATE_COLORS = {
+            0: (180, 180, 180),  # Unknown – gray
+            1: (200, 200, 255),  # Stationary/Vibration – light blue
+            2: (255, 200, 200),  # Oscillation – light red
+            3: (200, 255, 200),  # Full Rotation – light green
+        }
+
         PLOT_FIELDS = [
             {
                 "field": "angle",
@@ -172,6 +179,15 @@ def visualization_thread(
                 "bg_color": (240, 240, 240),
                 "color": (0, 0, 255),
                 "threshold": PHASE_JUMP_THRESHOLD,
+            },
+            {
+                "field": "motion_state",
+                "label": "Motion State",
+                "vmin": -1,
+                "vmax": 4,
+                "bg_color": (200, 200, 200),
+                "color": (0, 0, 0),
+                "threshold": 0,
             },
         ]
         # --- Right panel plot setup ---

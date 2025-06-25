@@ -10,6 +10,7 @@ class PoseEstimator:
         self.reversal_angles = deque(maxlen=10)
         self.last_velocity = 0.0
         self.last_reversal = None
+        self.last_reversal_time = None
 
         # Filters
         self.filtered_velocity = 0.0
@@ -28,6 +29,9 @@ class PoseEstimator:
 
         self.reversal_times = deque(maxlen=20)
         self.DEADBAND_THRESHOLD = 0.0
+
+        self.stationary_time_window = 2.0
+        self.stationary_velocity_threshold = 1.0
 
         # Handle source
         if isinstance(source, str):
@@ -99,7 +103,7 @@ class PoseEstimator:
 
         phase = self.get_phase()
         direction = self.get_direction()
-
+        motion_state = self._classify_motion_state()
         state_now = {
             "timestamp": now,
             "angle": angle,
@@ -111,6 +115,7 @@ class PoseEstimator:
             "cop_y": row["cop_y"],
             "phase": phase,
             "direction_positive": direction,
+            "motion_state": motion_state,
         }
 
         with self.lock:
@@ -225,6 +230,49 @@ class PoseEstimator:
             self.last_reversal_time = t_reversal
             self.last_reversal_angle = angle_reversal
             v_prev = s_prev.get("velocity", 0.0)
+
+    def _classify_motion_state(self):
+        now = time.time()
+
+        # --- 1. Stationary/Vibration ---
+        if len(self.history) >= 2:
+            recent_window = [
+                s
+                for s in self.history
+                if now - s["timestamp"] < self.stationary_time_window
+            ]
+            if recent_window and all(
+                abs(s["velocity"]) < self.stationary_velocity_threshold
+                for s in recent_window
+            ):
+                return 1  # Stationary
+
+        # --- 2. Oscillation vs Full Rotation ---
+        # Find index of last reversal
+        if self.last_reversal_time is None:
+            return 2  # Oscillation (no reversal yet)
+
+        accumulated_angle = 0.0
+        prev_angle = None
+        found = False
+
+        # Go backwards through history until last reversal
+        for s in reversed(self.history):
+            t = s["timestamp"]
+            angle = s["angle"]
+
+            if t < self.last_reversal_time:
+                break
+
+            if prev_angle is not None:
+                delta = self.wrapped_angle_diff(angle, prev_angle)
+                accumulated_angle += abs(delta)
+            prev_angle = angle
+
+            if accumulated_angle >= 360:
+                return 3  # Full Rotation
+
+        return 2  # Oscillation
 
     def get_phase(self):
         """

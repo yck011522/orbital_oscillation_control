@@ -27,6 +27,8 @@ class Controller(threading.Thread):
             print(
                 f"Timestamp: {state['timestamp']:.2f}, COP: ({state['cop_x']:.2f}, {state['cop_y']:.2f}), "
                 + f"θ: {state['angle']:.2f}, v: {state['velocity']:.2f}, a: {state['acceleration']:.2f}"
+                + f", Phase: {phase:.2f}, Direction: {'Forward' if direction else 'Backward'}"
+                + f", Motion State: {state['motion_state']}"
             )
 
             # Example control logic:
