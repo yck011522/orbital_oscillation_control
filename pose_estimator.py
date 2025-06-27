@@ -2,6 +2,7 @@ import threading
 import time
 from collections import deque
 import pandas as pd
+from timing_utils import FrequencyEstimator
 
 
 class PoseEstimator:
@@ -32,6 +33,8 @@ class PoseEstimator:
 
         self.stationary_time_window = 2.0
         self.stationary_velocity_threshold = 1.0
+
+        self.freq_estimator = FrequencyEstimator(alpha=0.9)
 
         # Handle source
         if isinstance(source, str):
@@ -118,6 +121,10 @@ class PoseEstimator:
             "motion_state": motion_state,
         }
 
+        # === Frequency computation ===
+        self.freq_estimator.update()
+
+        # Update shared state and history
         with self.lock:
             self.state.update(state_now)
             self.history.append(state_now)

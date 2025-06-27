@@ -1,28 +1,29 @@
 import threading
 import time
 from pose_estimator import PoseEstimator
-from visualization_thread import visualization_thread
+from visualization_thread import PoseVisualizer
 from controller import Controller
 from sensor_utils import sensor_data_stream
 
-USE_LIVE_SENSOR = True
+# USE_LIVE_SENSOR = True
+USE_LIVE_SENSOR = False
 
 if __name__ == "__main__":
     # Start Pose Estimation
     if USE_LIVE_SENSOR:
-        pose_est = PoseEstimator(sensor_data_stream())
+        pose_estimator = PoseEstimator(sensor_data_stream())
     else:
-        pose_est = PoseEstimator("sensor_recording/glass01.csv")
-    pose_est.start()
+        pose_estimator = PoseEstimator("sensor_recording/glass02.csv")
+    pose_estimator.start()
 
     # Start Controller (prints status)
-    controller = Controller(pose_est)
+    controller = Controller(pose_estimator)
     controller.start()
 
     # Start Visualization Thread
-    vis_thread = threading.Thread(target=visualization_thread, args=(pose_est,))
-    vis_thread.start()
+    visualizer = PoseVisualizer(pose_estimator, controller)
+    visualizer.start()
 
     # Wait until everything is done
     controller.join()
-    vis_thread.join()
+    visualizer.join()
