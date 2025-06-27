@@ -318,9 +318,9 @@ def visualization_thread(
                 cv2.putText(
                     time_img, sec_label, label_pos, FONT, 0.4, (0, 0, 0), 1, cv2.LINE_AA
                 )
-
+        reversal_times = list(pose_estimator.reversal_times)
         # Velocity Reversal markers
-        for t_reversal, _ in pose_estimator.reversal_times:
+        for t_reversal, _ in reversal_times:
             if t0 <= t_reversal <= t_now:
                 x = t_to_x(t_reversal)
                 cv2.line(
@@ -328,9 +328,9 @@ def visualization_thread(
                 )
 
         # Draw reversal intervals in milliseconds
-        for i in range(1, len(pose_estimator.reversal_times)):
-            t1, _ = pose_estimator.reversal_times[i - 1]
-            t2, _ = pose_estimator.reversal_times[i]
+        for i in range(1, len(reversal_times)):
+            t1, _ = reversal_times[i - 1]
+            t2, _ = reversal_times[i]
 
             if not (t0 <= t1 <= t_now and t0 <= t2 <= t_now):
                 continue  # Skip if both not visible
