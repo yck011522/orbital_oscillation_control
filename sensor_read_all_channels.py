@@ -55,6 +55,7 @@ try:
             print(f"Distance from center: {distance:8.3f} mm , Angle: {angle_degrees:8.3f} degrees")
         else:
             print("No significant weight detected.")
+            print(weights)
 
         # Print update frequency
         now = time.time()
