@@ -162,11 +162,11 @@ def sensor_data_stream():
                 continue  # Ignore noise / no object
 
             yield None, {
-                "Time (s)": time.time(),
-                "Angle (deg)": angle_degrees,
-                "TotalWeight (kg)": total_weight,
-                "COP_X (m)": cop_position[0] / 1000.0,  # convert mm to meters
-                "COP_Y (m)": cop_position[1] / 1000.0,
+                "timestamp": time.time(),
+                "angle": angle_degrees,
+                "total_weight": total_weight,
+                "cop_x": cop_position[0] ,
+                "cop_y": cop_position[1] ,
             }
 
             time.sleep(0.04)  # ~25 Hz
