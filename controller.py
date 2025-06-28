@@ -43,10 +43,10 @@ class Controller(threading.Thread):
         # You can populate these via slider/UI later
         self.phase_start = 95
         self.phase_end = 260
-        self.max_tilt = 0.80  # degrees
-        self.acceleration_rate = 1.0  # deg/sec²
-        self.deceleration_rate = 1.0  # deg/sec²
-        self.lead_angle_deg = 60  # lead angle for azimuth
+        self.max_tilt = 0.65  # degrees
+        self.acceleration_rate = 0.28  # deg/sec²
+        self.deceleration_rate = 0.28  # deg/sec²
+        self.lead_angle_deg = 90  # lead angle for azimuth
 
         # For full rotation control
         self.full_rotation_tilt = 0.45         # degrees (constant tilt to maintain)

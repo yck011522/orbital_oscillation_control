@@ -40,6 +40,9 @@ class PoseVisualizer(threading.Thread):
         phase_start = cv2.getTrackbarPos("Act Start", "Pose Visualization")
         phase_end = cv2.getTrackbarPos("Act End", "Pose Visualization")
         lead_angle_deg = cv2.getTrackbarPos("Lead Angle", "Pose Visualization")
+        tilt_acc_x100 = cv2.getTrackbarPos("Tilt Acc x100", "Pose Visualization")
+        tilt_dec_x100 = cv2.getTrackbarPos("Tilt Dec x100", "Pose Visualization")
+        max_tilt_x100 = cv2.getTrackbarPos("Max Tilt x100", "Pose Visualization")
         if self.controller is not None:
             if phase_start > 0:
                 self.controller.phase_start = phase_start
@@ -47,6 +50,12 @@ class PoseVisualizer(threading.Thread):
                 self.controller.phase_end = phase_end
             if lead_angle_deg > 0:
                 self.controller.lead_angle_deg = lead_angle_deg
+            if tilt_acc_x100 > 0:
+                self.controller.acceleration_rate = tilt_acc_x100 / 100.0
+            if tilt_dec_x100 > 0:
+                self.controller.deceleration_rate = tilt_dec_x100 / 100.0
+            if max_tilt_x100 > 0:
+                self.controller.max_tilt = max_tilt_x100 / 100.0
 
     def run(self):
 
@@ -61,6 +70,16 @@ class PoseVisualizer(threading.Thread):
         cv2.createTrackbar(
             "Lead Angle", "Pose Visualization", self.controller.lead_angle_deg, 180, self.on_slider_change
         )
+        cv2.createTrackbar(
+            "Tilt Acc x100", "Pose Visualization", (int)(self.controller.acceleration_rate * 100), 100, self.on_slider_change
+        )
+        cv2.createTrackbar(
+            "Tilt Dec x100", "Pose Visualization", (int)(self.controller.deceleration_rate * 100), 100, self.on_slider_change
+        )
+        cv2.createTrackbar(
+            "Max Tilt x100", "Pose Visualization",  (int)(self.controller.max_tilt *100), 100, self.on_slider_change
+        )
+        
 
         while not self.pose_estimator.is_finished():
             self._render_frame()

@@ -3,7 +3,32 @@ import time
 from collections import deque
 import pandas as pd
 from timing_utils import FrequencyEstimator
+import math
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Angle and Direction Convention (used throughout PoseEstimator)
+#
+# - The Center of Pressure (CoP) is computed using weighted positions from
+#   the pressure sensor array.
+#
+# - The angle is calculated as:
+#       angle = atan2(cop_y, cop_x)
+#   and returned in degrees.
+#
+# - This angle follows standard polar coordinates:
+#       0°   = Positive X direction (East)
+#       90°  = Positive Y direction (North)
+#       180° = Negative X direction (West)
+#       270° = Negative Y direction (South)
+#
+# - The value wraps in [0°, 360°), increasing counter-clockwise.
+#
+# - This convention ensures compatibility with how azimuth is used elsewhere
+#   in the system (e.g., actuator targeting, control visualization).
+#
+# - Angle estimation includes optional smoothing of CoP values via exponential
+#   filtering, to reduce jitter from sensor noise.
+# ─────────────────────────────────────────────────────────────────────────────
 
 class PoseEstimator(threading.Thread):
     def __init__(self, source, history_size=1000):
@@ -15,6 +40,11 @@ class PoseEstimator(threading.Thread):
         self.last_reversal_time = None
 
         # Filters
+        self.filtered_cop_x = None
+        self.filtered_cop_y = None
+        self.last_update_time = None
+        self.position_filter_tau = 0.2  # seconds
+
         self.filtered_velocity = 0.0
         self.velocity_filter_tau = 0.2  # Larger value for more smoothing
         self.velocity_filter_last_time = None
@@ -87,8 +117,8 @@ class PoseEstimator(threading.Thread):
 
     def _process_row(self, row):
         now = time.time()
-        angle = row["angle"]
 
+        angle = self._estimate_angle(row["cop_x"], row["cop_y"])
         velocity = self._estimate_velocity()
         acceleration = self._estimate_acceleration()
         self._check_velocity_reversal()
@@ -130,6 +160,29 @@ class PoseEstimator(threading.Thread):
         """Compute smallest angular difference (in degrees) considering wraparound at ±180°."""
         diff = (a1 - a0 + 180) % 360 - 180
         return diff
+
+
+    def _estimate_angle(self, raw_cop_x, raw_cop_y):
+        now = time.time()
+
+        if self.filtered_cop_x is None:
+            # Initialize
+            self.filtered_cop_x = raw_cop_x
+            self.filtered_cop_y = raw_cop_y
+            self.last_update_time = now
+            return math.degrees(math.atan2(raw_cop_y, raw_cop_x))
+
+        dt = now - self.last_update_time
+        self.last_update_time = now
+
+        alpha = 1.0 - math.exp(-dt / self.position_filter_tau)
+
+        self.filtered_cop_x = (1 - alpha) * self.filtered_cop_x + alpha * raw_cop_x
+        self.filtered_cop_y = (1 - alpha) * self.filtered_cop_y + alpha * raw_cop_y
+
+        angle_rad = math.atan2(self.filtered_cop_y, self.filtered_cop_x)
+        return math.degrees(angle_rad)
+
 
     def _estimate_velocity(self, window=5):
         if len(self.history) < window:
