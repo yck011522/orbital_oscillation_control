@@ -169,6 +169,6 @@ def sensor_data_stream():
                 "cop_y": cop_position[1] ,
             }
 
-            time.sleep(0.04)  # ~25 Hz
+            # time.sleep(0.04)  # ~25 Hz
     finally:
         client.close()

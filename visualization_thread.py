@@ -4,6 +4,7 @@ import cv2
 from pose_estimator import PoseEstimator
 from controller import Controller
 from timing_utils import FrequencyEstimator
+import threading
 
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 
@@ -11,7 +12,7 @@ SAFETY_CIRCLE_RADIUS_MM = 200
 SCALE = 2  # pixels per mm (800 px represents 200 mm)
 
 
-class PoseVisualizer:
+class PoseVisualizer(threading.Thread):
     def __init__(
         self,
         pose_estimator: PoseEstimator,
@@ -19,11 +20,12 @@ class PoseVisualizer:
         canvas_height=800,
         canvas_width=1600,
     ):
+        super().__init__(daemon=True, name="PoseVisualizer")
         self.pose_estimator = pose_estimator
         self.controller = controller
         self.canvas_height = canvas_height
         self.canvas_width = canvas_width
-        self.freq_estimator = FrequencyEstimator(alpha=0.9)
+        self.freq_estimator = FrequencyEstimator(alpha=0.2)
 
         self.SAFETY_CIRCLE_RADIUS_MM = 200
         self.SCALE = 2  # pixels per mm
@@ -42,7 +44,7 @@ class PoseVisualizer:
             if phase_end > 0:
                 self.controller.phase_end = phase_end / 100.0
 
-    def start(self):
+    def run(self):
 
         cv2.namedWindow("Pose Visualization")
 

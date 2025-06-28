@@ -5,8 +5,9 @@ import pandas as pd
 from timing_utils import FrequencyEstimator
 
 
-class PoseEstimator:
+class PoseEstimator(threading.Thread):
     def __init__(self, source, history_size=1000):
+        super().__init__(daemon=True, name="PoseEstimator")
         self.history = deque(maxlen=history_size)
         self.reversal_angles = deque(maxlen=10)
         self.last_velocity = 0.0
@@ -34,7 +35,7 @@ class PoseEstimator:
         self.stationary_time_window = 2.0
         self.stationary_velocity_threshold = 1.0
 
-        self.freq_estimator = FrequencyEstimator(alpha=0.9)
+        self.freq_estimator = FrequencyEstimator(alpha=0.2)
 
         # Handle source
         if isinstance(source, str):
@@ -44,12 +45,6 @@ class PoseEstimator:
         else:
             self.mode = "stream"
             self.data_stream = source
-
-    def start(self):
-        if self.mode == "csv":
-            self.start_time = self.df["Time (s)"].iloc[0]
-            self.start_wall_time = time.time()
-        threading.Thread(target=self._run, daemon=True).start()
 
     def stop(self):
         self.stop_event.set()
@@ -61,9 +56,12 @@ class PoseEstimator:
         with self.lock:
             return self.state.copy()
 
-    def _run(self):
+    def run(self):
         if self.mode == "csv":
-            for idx, row in self.df_iter:
+            self.start_time = self.df["Time (s)"].iloc[0]
+            self.start_wall_time = time.time()
+
+            for _, row in self.df_iter:
                 if self.stop_event.is_set():
                     break
 
@@ -72,14 +70,12 @@ class PoseEstimator:
                 while time.time() < target_wall_time:
                     time.sleep(0.001)
 
-                self._process_row(
-                    {
-                        "angle": row["Angle (deg)"],
-                        "cop_x": row["COP_X (m)"],
-                        "cop_y": row["COP_Y (m)"],
-                        "total_weight": row["TotalWeight (kg)"],
-                    }
-                )
+                self._process_row({
+                    "angle": row["Angle (deg)"],
+                    "cop_x": row["COP_X (m)"],
+                    "cop_y": row["COP_Y (m)"],
+                    "total_weight": row["TotalWeight (kg)"],
+                })
 
             self.finished_flag.set()
 
@@ -87,7 +83,6 @@ class PoseEstimator:
             for _, row in self.data_stream:
                 if self.stop_event.is_set():
                     break
-
                 self._process_row(row)
 
     def _process_row(self, row):
