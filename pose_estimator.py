@@ -279,7 +279,9 @@ class PoseEstimator(threading.Thread):
     def get_phase(self):
         """
         Returns:
-            phase (float): between 0.0 and 1.0
+            phase (float): phase angle in degrees from 0 to 360.
+                0–180: CW direction
+                180–360: CCW direction
         """
         if len(self.reversal_times) < 2:
             return 0.0
@@ -293,9 +295,15 @@ class PoseEstimator(threading.Thread):
             return 0.0
 
         t_since_last = now - t_curr
-        phase = t_since_last / half_period
+        normalized_phase = min(1.0, max(0.0, t_since_last / half_period))  # clamp to [0,1]
 
-        return min(1.0, max(0.0, phase))  # clamp to [0,1]
+        # Use velocity sign to infer direction
+        latest_velocity = self.state.get("velocity", 0.0)
+        if latest_velocity >= 0:
+            return normalized_phase * 180.0  # CW half
+        else:
+            return 180.0 + normalized_phase * 180.0  # CCW half
+
 
     def get_direction(self):
         """

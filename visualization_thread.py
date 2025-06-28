@@ -40,19 +40,19 @@ class PoseVisualizer(threading.Thread):
         phase_end = cv2.getTrackbarPos("Act End", "Pose Visualization")
         if self.controller is not None:
             if phase_start > 0:
-                self.controller.phase_start = phase_start / 100.0
+                self.controller.phase_start = phase_start
             if phase_end > 0:
-                self.controller.phase_end = phase_end / 100.0
+                self.controller.phase_end = phase_end
 
     def run(self):
 
         cv2.namedWindow("Pose Visualization")
 
         cv2.createTrackbar(
-            "Act Start", "Pose Visualization", 80, 200, self.on_slider_change
+            "Act Start", "Pose Visualization", self.controller.phase_start, 360, self.on_slider_change
         )
         cv2.createTrackbar(
-            "Act End", "Pose Visualization", 120, 200, self.on_slider_change
+            "Act End", "Pose Visualization", self.controller.phase_end, 360, self.on_slider_change
         )
 
         while not self.pose_estimator.is_finished():
@@ -212,7 +212,7 @@ class PoseVisualizer(threading.Thread):
         POS_JUMP_THRESHOLD = 50  # degrees
         VEL_JUMP_THRESHOLD = 80  # deg/sec
         ACC_JUMP_THRESHOLD = 200  # deg/sec²
-        PHASE_JUMP_THRESHOLD = 0.6  # large enough to skip across reset at reversal
+        PHASE_JUMP_THRESHOLD = 180  # large enough to skip across reset at reversal
         TEXT_COLOR = (0, 0, 0)
 
         # === RIGHT PANEL: Time History ===
@@ -276,7 +276,7 @@ class PoseVisualizer(threading.Thread):
                 "field": "phase",
                 "label": "Phase",
                 "vmin": 0.0,
-                "vmax": 1.0,
+                "vmax": 360.0,
                 "bg_color": (240, 240, 240),
                 "color": (0, 0, 255),
                 "threshold": PHASE_JUMP_THRESHOLD,

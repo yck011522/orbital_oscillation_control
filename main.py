@@ -25,8 +25,9 @@ if __name__ == "__main__":
     visualizer.start()
 
     while (True):
-        print(f"Pose Frequency: {pose_estimator.freq_estimator.smoothed_freq :.2f} Hz, Controller Frequency: {controller.freq_estimator.smoothed_freq :.2f} Hz")
-        time.sleep(0.1)
+        # print(f"Pose Frequency: {pose_estimator.freq_estimator.smoothed_freq :.2f} Hz, Controller Frequency: {controller.freq_estimator.smoothed_freq :.2f} Hz")
+        # print(f"Pose Estimator State: {pose_estimator.get_phase()}")
+        time.sleep(0.05)
     # Wait until everything is done
     controller.join()
     visualizer.join()
