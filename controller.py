@@ -85,28 +85,28 @@ class Controller(threading.Thread):
                 self.delta_time = time.time() - self.last_control_time
             self.last_control_time = time.time()
 
-            state = self.pose_estimator.get_latest_state()
+            object_state = self.pose_estimator.get_latest_state()
 
             # Check debug override
             if self.debug_force_state is not None:
-                active_state = self.debug_force_state
+                self.state = self.debug_force_state
             else:
-                active_state = self.state
+                self.state = self.state
 
             # FSM Logic
-            if active_state == self.STATE_WAIT_TILL_STATIONARY:
-                if state["motion_state"] == 1:  # stationary
+            if self.state == self.STATE_WAIT_TILL_STATIONARY:
+                if object_state["motion_state"] == 1:  # stationary
                     self.delay_timer_start = time.time()
                     self.state = self.STATE_DELAY_BEFORE_PUMP
 
-            elif active_state == self.STATE_DELAY_BEFORE_PUMP:
+            elif self.state == self.STATE_DELAY_BEFORE_PUMP:
                 if time.time() - self.delay_timer_start > self.delay_duration:
                     self.state = self.STATE_PUMP
 
-            elif active_state == self.STATE_PUMP:
-                pose_state = state["motion_state"]
+            elif self.state == self.STATE_PUMP:
+                pose_state = object_state["motion_state"]
                 if pose_state in self.control_functions:
-                    target_tilt, target_azimuth = self.control_functions[pose_state](state)
+                    target_tilt, target_azimuth = self.control_functions[pose_state](object_state)
                     print(f"Control Target Tilt: {target_tilt:.2f} degrees, Azimuth: {target_azimuth:.2f} degrees")
                     # Send target to actuator here
                     self._current_tilt = target_tilt
@@ -115,15 +115,15 @@ class Controller(threading.Thread):
 
                     
                 # Logic to transition to decay state
-                if state["motion_state"] == 3:  # Full rotation reached
+                if object_state["motion_state"] == 3:  # Full rotation reached
                     if time.time() - self.full_rotation_start_time > self.pump_duration:
                         self.state = self.STATE_DECAY
                 else:
                     self.full_rotation_start_time = time.time()
 
-            elif active_state == self.STATE_DECAY:
+            elif self.state == self.STATE_DECAY:
                 # Optional: graceful decay logic
-                if state["motion_state"] == 1:  # back to stationary
+                if object_state["motion_state"] == 1:  # back to stationary
                     self.state = self.STATE_WAIT_TILL_STATIONARY
 
             self.freq_estimator.update()

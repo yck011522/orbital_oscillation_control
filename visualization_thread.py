@@ -118,16 +118,36 @@ class PoseVisualizer(threading.Thread):
             lines.append(f"Ctrl Freq:  {self.controller.freq_estimator.get():.1f} Hz")
         for i, text in enumerate(lines):
             y = 20 + i * 20
-            cv2.putText(
-                canvas,
-                text,
-                (10, y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (255, 255, 255),
-                1,
-                cv2.LINE_AA,
-            )
+            cv2.putText(canvas, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5,(255, 255, 255), 1, cv2.LINE_AA)
+
+        # === Draw Controller State Info ===
+        if self.controller is not None:
+            state_name = {
+                self.controller.STATE_WAIT_TILL_STATIONARY: "WAIT_TILL_STATIONARY",
+                self.controller.STATE_DELAY_BEFORE_PUMP: "DELAY_BEFORE_PUMP",
+                self.controller.STATE_PUMP: "PUMP",
+                self.controller.STATE_DECAY: "DECAY"
+            }.get(self.controller.state, "UNKNOWN")
+
+            control_func_name = "None"
+            if self.controller.state == self.controller.STATE_PUMP:
+                pose_state = self.pose_estimator.get_latest_state().get("motion_state", None)
+                func = self.controller.control_functions.get(pose_state, None)
+                control_func_name = func.__name__ if func else "None"
+
+            text_lines = [
+                f"FSM: {state_name}",
+                f"Ctrl Func: {control_func_name}",
+            ]
+
+            # Draw text at bottom-left corner
+            x = 20
+            line_height = 25
+            y_base = canvas.shape[0] - 20  # 20 px above bottom edge
+
+            for i, line in enumerate(reversed(text_lines)):  # draw bottom-up
+                y = y_base - i * line_height
+                cv2.putText(canvas, line, (x, y), FONT, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
 
     def _draw_polar_view(self, history, shared_state):
         # You can paste your full polar panel drawing code here unchanged,
