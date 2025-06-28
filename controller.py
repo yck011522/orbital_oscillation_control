@@ -1,10 +1,11 @@
 import threading
 import time
 from timing_utils import FrequencyEstimator
+from pose_estimator import PoseEstimator
 import math
 
 class Controller(threading.Thread):
-    def __init__(self, pose_estimator, control_freq=100):
+    def __init__(self, pose_estimator: PoseEstimator, control_freq=100):
         super().__init__(daemon=True, name="Controller")
         super().__init__(daemon=True)
         self.pose_estimator = pose_estimator
@@ -38,8 +39,8 @@ class Controller(threading.Thread):
         self._current_azimuth = 0.0 
 
         # You can populate these via slider/UI later
-        self.phase_start = 90
-        self.phase_end = 220
+        self.phase_start = 80
+        self.phase_end = 190
         self.max_tilt = 0.60  # degrees
         self.acceleration_rate = 1.0  # deg/sec²
         self.deceleration_rate = 1.0  # deg/sec²
@@ -141,10 +142,11 @@ class Controller(threading.Thread):
 
         # === AZIMUTH CONTROL ===
         # Lead angle applied only during deceleration half (e.g., CW→CCW)
-        if 90 <= phase_deg <= 270:
-            azimuth_deg = obj_angle_deg - self.lead_angle_deg
-        else:
-            azimuth_deg = obj_angle_deg
+        # if 90 <= phase_deg <= 270:
+        #     azimuth_deg = obj_angle_deg - self.lead_angle_deg
+        # else:
+        #     azimuth_deg = obj_angle_deg
+        azimuth_deg = obj_angle_deg + self.lead_angle_deg
 
         # Normalize azimuth to [-180, 180] or [0, 360] if needed
         azimuth_deg = (azimuth_deg + 360) % 360
