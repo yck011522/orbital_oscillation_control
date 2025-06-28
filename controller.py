@@ -41,12 +41,12 @@ class Controller(threading.Thread):
         self._current_azimuth = 0.0 
 
         # You can populate these via slider/UI later
-        self.phase_start = 80
-        self.phase_end = 190
+        self.phase_start = 95
+        self.phase_end = 260
         self.max_tilt = 0.80  # degrees
         self.acceleration_rate = 1.0  # deg/sec²
         self.deceleration_rate = 1.0  # deg/sec²
-        self.lead_angle_deg = 60.0  # lead angle for azimuth
+        self.lead_angle_deg = 60  # lead angle for azimuth
 
         # For full rotation control
         self.full_rotation_tilt = 0.45         # degrees (constant tilt to maintain)
@@ -109,6 +109,8 @@ class Controller(threading.Thread):
                     target_tilt, target_azimuth = self.control_functions[pose_state](state)
                     print(f"Control Target Tilt: {target_tilt:.2f} degrees, Azimuth: {target_azimuth:.2f} degrees")
                     # Send target to actuator here
+                    self._current_tilt = target_tilt
+                    self._current_azimuth = target_azimuth
                     self.send_target_to_motor(target_tilt, target_azimuth)
 
                     
@@ -202,6 +204,7 @@ class Controller(threading.Thread):
         now = time.time()
         dt = now - self.last_motor_time
         self.last_motor_time = now
+        target_tilt = max(-self.max_tilt, min(self.max_tilt, target_tilt))
 
         # Convert to radians
         tilt_rad = math.radians(target_tilt)

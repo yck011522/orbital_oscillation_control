@@ -16,11 +16,11 @@ class PoseEstimator(threading.Thread):
 
         # Filters
         self.filtered_velocity = 0.0
-        self.velocity_filter_tau = 0.05
+        self.velocity_filter_tau = 0.2  # Larger value for more smoothing
         self.velocity_filter_last_time = None
 
         self.filtered_acceleration = 0.0
-        self.acceleration_filter_tau = 0.2
+        self.acceleration_filter_tau = 0.5   # Larger value for more smoothing
         self.acceleration_filter_last_time = None
 
         self.state = {}

@@ -1,6 +1,7 @@
 import time
 import numpy as np
 import cv2
+import math
 from pose_estimator import PoseEstimator
 from controller import Controller
 from timing_utils import FrequencyEstimator
@@ -38,11 +39,14 @@ class PoseVisualizer(threading.Thread):
         """Callback for track-bar changes."""
         phase_start = cv2.getTrackbarPos("Act Start", "Pose Visualization")
         phase_end = cv2.getTrackbarPos("Act End", "Pose Visualization")
+        lead_angle_deg = cv2.getTrackbarPos("Lead Angle", "Pose Visualization")
         if self.controller is not None:
             if phase_start > 0:
                 self.controller.phase_start = phase_start
             if phase_end > 0:
                 self.controller.phase_end = phase_end
+            if lead_angle_deg > 0:
+                self.controller.lead_angle_deg = lead_angle_deg
 
     def run(self):
 
@@ -53,6 +57,9 @@ class PoseVisualizer(threading.Thread):
         )
         cv2.createTrackbar(
             "Act End", "Pose Visualization", self.controller.phase_end, 360, self.on_slider_change
+        )
+        cv2.createTrackbar(
+            "Lead Angle", "Pose Visualization", self.controller.lead_angle_deg, 180, self.on_slider_change
         )
 
         while not self.pose_estimator.is_finished():
@@ -80,7 +87,7 @@ class PoseVisualizer(threading.Thread):
         canvas = np.hstack([polar_img, time_img])
         self._draw_frequencies(canvas)
         cv2.imshow("Pose Visualization", canvas)
-        cv2.moveWindow("Pose Visualization", 50, 50)
+        # cv2.moveWindow("Pose Visualization", 50, 50)
         cv2.waitKey(1)
 
     def _draw_frequencies(self, canvas):
@@ -192,6 +199,29 @@ class PoseVisualizer(threading.Thread):
 
         cv2.circle(polar_img, (px, py), 7, DARK_GREY, -1)  # outer dark grey ring
         cv2.circle(polar_img, (px, py), 4, (255, 255, 255), -1)  # inner white dot
+
+        # === Draw current tilt direction as a dot ===
+        if self.controller is not None:
+            tilt_plot_scale = 400
+            tilt = getattr(self.controller, "_current_tilt", 0.0)
+            azimuth_deg = getattr(self.controller, "_current_azimuth", 0.0)
+
+            # Normalize radius to [0, max_visual_radius_px]
+            radius_px = int(tilt * tilt_plot_scale)  # assuming 1.2° max tilt
+
+            # Convert azimuth to radians
+            azimuth_rad = math.radians(azimuth_deg)
+
+            # Polar to cartesian conversion (Y-axis flipped for image coords)
+            dx = radius_px * math.cos(azimuth_rad)
+            dy = radius_px * math.sin(azimuth_rad)
+
+            px = int(center[0] + dx)
+            py = int(center[1] - dy)
+
+            cv2.circle(polar_img, (px, py), 8, (255, 0, 0), -1)  # blue dot
+            cv2.putText(polar_img, "Tilt Dir", (px + 10, py), FONT, 0.5, (0, 0, 0), 1)
+
 
         return polar_img
 

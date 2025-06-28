@@ -13,7 +13,7 @@ def actuator_length(theta_eff):
     return lookup_actuator_position(theta_eff)
 
 def polar_to_tilt_components(elevation, azimuth):
-    theta_x = np.arctan(np.tan(elevation) * np.cos(azimuth))
+    theta_x = - np.arctan(np.tan(elevation) * np.cos(azimuth))
     theta_y = - np.arctan(np.tan(elevation) * np.sin(azimuth))
     return theta_x, theta_y
 
