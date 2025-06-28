@@ -1,5 +1,8 @@
 import threading
 import time
+from motor_control import send_absolute_position_mm, open_serial, home_all_motors
+from actuator_utils import actuator_length, polar_to_tilt_components
+
 from timing_utils import FrequencyEstimator
 from pose_estimator import PoseEstimator
 import math
@@ -7,7 +10,6 @@ import math
 class Controller(threading.Thread):
     def __init__(self, pose_estimator: PoseEstimator, control_freq=100):
         super().__init__(daemon=True, name="Controller")
-        super().__init__(daemon=True)
         self.pose_estimator = pose_estimator
         self.control_freq = control_freq
         self.stop_event = threading.Event()
@@ -41,7 +43,7 @@ class Controller(threading.Thread):
         # You can populate these via slider/UI later
         self.phase_start = 80
         self.phase_end = 190
-        self.max_tilt = 0.60  # degrees
+        self.max_tilt = 0.80  # degrees
         self.acceleration_rate = 1.0  # deg/sec²
         self.deceleration_rate = 1.0  # deg/sec²
         self.lead_angle_deg = 60.0  # lead angle for azimuth
@@ -50,6 +52,18 @@ class Controller(threading.Thread):
         self.full_rotation_tilt = 0.45         # degrees (constant tilt to maintain)
         self.full_rotation_lead_angle = 15.0   # degrees ahead of current object angle
 
+        # Serial connection for motor control
+        self.ser = open_serial()
+        if not home_all_motors(self.ser, settle_position_mm=28.1):
+            print("⚠️ Homing failed. Exiting controller.")
+            exit()
+
+        # Motor control parameters
+        self.prev_positions = {1: None, 2: None, 3: None, 4: None}
+        self.actuator_value_offset = 0.2
+        self.default_speed_rpm = 100
+        self.speed_adjustment = 1.0
+        self.last_motor_time = time.time()
 
         # Frequency tracking
         self.last_control_time = time.time()
@@ -95,7 +109,10 @@ class Controller(threading.Thread):
                     target_tilt, target_azimuth = self.control_functions[pose_state](state)
                     print(f"Control Target Tilt: {target_tilt:.2f} degrees, Azimuth: {target_azimuth:.2f} degrees")
                     # Send target to actuator here
+                    self.send_target_to_motor(target_tilt, target_azimuth)
 
+                    
+                # Logic to transition to decay state
                 if state["motion_state"] == 3:  # Full rotation reached
                     if time.time() - self.full_rotation_start_time > self.pump_duration:
                         self.state = self.STATE_DECAY
@@ -108,6 +125,9 @@ class Controller(threading.Thread):
                     self.state = self.STATE_WAIT_TILL_STATIONARY
 
             self.freq_estimator.update()
+        
+        send_absolute_position_mm(self.ser, 21.5, 0, speed_rpm=200)
+        self.ser.close()
 
 
     def stop(self):
@@ -146,7 +166,7 @@ class Controller(threading.Thread):
         #     azimuth_deg = obj_angle_deg - self.lead_angle_deg
         # else:
         #     azimuth_deg = obj_angle_deg
-        azimuth_deg = obj_angle_deg + self.lead_angle_deg
+        azimuth_deg = obj_angle_deg - self.lead_angle_deg
 
         # Normalize azimuth to [-180, 180] or [0, 360] if needed
         azimuth_deg = (azimuth_deg + 360) % 360
@@ -177,3 +197,43 @@ class Controller(threading.Thread):
         azimuth_deg = (azimuth_deg + 360) % 360
 
         return  self._current_tilt, azimuth_deg
+    
+    def send_target_to_motor(self, target_tilt, target_azimuth):
+        now = time.time()
+        dt = now - self.last_motor_time
+        self.last_motor_time = now
+
+        # Convert to radians
+        tilt_rad = math.radians(target_tilt)
+        azimuth_rad = math.radians(target_azimuth)
+        theta_x, theta_y = polar_to_tilt_components(tilt_rad, azimuth_rad)
+
+        L_x_plus  = actuator_length(theta_x) + self.actuator_value_offset
+        L_x_minus = actuator_length(-theta_x) + self.actuator_value_offset
+        L_y_plus  = actuator_length(theta_y) + self.actuator_value_offset
+        L_y_minus = actuator_length(-theta_y) + self.actuator_value_offset
+
+        target_positions = {
+            1: L_x_plus,
+            2: L_y_minus,
+            3: L_x_minus,
+            4: L_y_plus
+        }
+
+        estimated_rpm = {}
+        for motor_id, pos in target_positions.items():
+            prev_pos = self.prev_positions[motor_id]
+            if prev_pos is not None and dt > 0:
+                velocity_mm_s = (pos - prev_pos) / dt
+                rpm = abs(velocity_mm_s * 60 / 2.0)  # pitch = 2mm
+                estimated_rpm[motor_id] = int(min(rpm * self.speed_adjustment, 1000))
+            else:
+                estimated_rpm[motor_id] = self.default_speed_rpm
+
+        # Send to motors
+        send_absolute_position_mm(self.ser, L_x_plus, 1, speed_rpm=estimated_rpm[1])
+        send_absolute_position_mm(self.ser, L_y_minus, 2, speed_rpm=estimated_rpm[2])
+        send_absolute_position_mm(self.ser, L_x_minus, 3, speed_rpm=estimated_rpm[3])
+        send_absolute_position_mm(self.ser, L_y_plus, 4, speed_rpm=estimated_rpm[4])
+
+        self.prev_positions = target_positions
