@@ -2,6 +2,7 @@ import time
 import numpy as np
 import cv2
 from pose_estimator import PoseEstimator
+from controller import Controller
 from timing_utils import FrequencyEstimator
 
 FONT = cv2.FONT_HERSHEY_SIMPLEX
@@ -12,7 +13,11 @@ SCALE = 2  # pixels per mm (800 px represents 200 mm)
 
 class PoseVisualizer:
     def __init__(
-        self, pose_estimator, controller=None, canvas_height=800, canvas_width=1600
+        self,
+        pose_estimator: PoseEstimator,
+        controller: Controller = None,
+        canvas_height=800,
+        canvas_width=1600,
     ):
         self.pose_estimator = pose_estimator
         self.controller = controller
@@ -27,7 +32,27 @@ class PoseVisualizer:
         self.polar_size = (canvas_height, canvas_width // 2)
         self.timeplot_size = (canvas_height, canvas_width // 2)
 
+    def on_slider_change(self, value):
+        """Callback for track-bar changes."""
+        phase_start = cv2.getTrackbarPos("Act Start", "Pose Visualization")
+        phase_end = cv2.getTrackbarPos("Act End", "Pose Visualization")
+        if self.controller is not None:
+            if phase_start > 0:
+                self.controller.phase_start = phase_start / 100.0
+            if phase_end > 0:
+                self.controller.phase_end = phase_end / 100.0
+
     def start(self):
+
+        cv2.namedWindow("Pose Visualization")
+
+        cv2.createTrackbar(
+            "Act Start", "Pose Visualization", 80, 200, self.on_slider_change
+        )
+        cv2.createTrackbar(
+            "Act End", "Pose Visualization", 120, 200, self.on_slider_change
+        )
+
         while not self.pose_estimator.is_finished():
             self._render_frame()
             time.sleep(1 / 30.0)
