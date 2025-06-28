@@ -50,7 +50,7 @@ class Controller(threading.Thread):
 
         # For full rotation control
         self.full_rotation_tilt = 0.45         # degrees (constant tilt to maintain)
-        self.full_rotation_lead_angle = 15.0   # degrees ahead of current object angle
+        self.full_rotation_lead_angle = 90.0   # degrees ahead of current object angle
 
         # Serial connection for motor control
         self.ser = open_serial()
