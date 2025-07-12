@@ -72,11 +72,14 @@ class PoseEstimator(threading.Thread):
             3.0  # look further back this many seconds if distance is not enough
         )
         self.arc_portion_deg_min = 5.0  # minimum angle portion to consider a valid arc
-        self.arc_filter_tau = 4.0  # Larger value for more smoothing
+        self.arc_filter_tau = (
+            3.0  # Larger value for more smoothing # 4 seconds seems reasonable
+        )
         self.arc_filter_last_time = None
-        self.arc_filtered_center_x = None
-        self.arc_filtered_center_y = None
-        self.arc_filtered_radius = None
+        self.expected_radius = 115.0  # Expected radius in mm for the arc
+        self.arc_filtered_center_x = 0  # None # Initialize to 0 for warm start
+        self.arc_filtered_center_y = 0  # None # Initialize to 0 for warm start
+        self.arc_filtered_radius = self.expected_radius  # Initialize to expected radius
 
         self.stationary_time_window = 2.0
         self.stationary_velocity_threshold = 1.0
@@ -401,8 +404,101 @@ class PoseEstimator(threading.Thread):
         except np.linalg.LinAlgError:
             return None, None, None
 
+    # def estimate_arc_center(self):
+    #     now = time.time()
+    #     points = []
+    #     total_arc_length = 0.0
+    #     last_point = None
+
+    #     for state in reversed(self.history):
+    #         age = now - state["timestamp"]
+    #         if age > self.arc_history_time_sec_max:
+    #             break
+
+    #         x = state.get("cop_x")
+    #         y = state.get("cop_y")
+    #         if x is None or y is None:
+    #             continue
+
+    #         current_point = (x, y)
+    #         if last_point:
+    #             dist = math.hypot(x - last_point[0], y - last_point[1])
+    #             total_arc_length += dist
+
+    #         points.append(current_point)
+    #         last_point = current_point
+
+    #         if (
+    #             total_arc_length >= self.arc_length_min
+    #             and len(points) >= self.arc_history_min_points
+    #         ):
+    #             break  # Stop once we accumulate enough arc length
+
+    #     # if len(points) < 10:
+    #     #     return  # Too few points
+    #     if total_arc_length < self.arc_length_min:
+    #         return
+
+    #     points = list(reversed(points))  # chronological order
+
+    #     # === Fit circle ===
+    #     cx, cy, r = self._fit_circle_numpy(points)
+    #     if cx is None or cy is None or r is None or r == 0:
+    #         return
+
+    #     # === Validate angle portion ===
+    #     # angles = [math.atan2(p[1] - cy, p[0] - cx) for p in points]
+    #     # min_angle = min(angles)
+    #     # max_angle = max(angles)
+    #     # arc_angle_deg = math.degrees(
+    #     #     (max_angle - min_angle + math.pi * 2) % (math.pi * 2)
+    #     # )
+
+    #     # if arc_angle_deg < self.arc_portion_deg_min:
+    #     #     return  # arc too short to be reliable
+
+    #     # === Exponential smoothing ===
+    #     if self.arc_filter_last_time is None:
+    #         alpha = 1.0
+    #     else:
+    #         dt = now - self.arc_filter_last_time
+    #         alpha = 1 - math.exp(-dt / self.arc_filter_tau)
+
+    #     self.arc_filter_last_time = now
+
+    #     def smooth(old, new):
+    #         return alpha * new + (1 - alpha) * old if old is not None else new
+
+    #     self.arc_filtered_center_x = smooth(self.arc_filtered_center_x, cx)
+    #     self.arc_filtered_center_y = smooth(self.arc_filtered_center_y, cy)
+    #     self.arc_filtered_radius = smooth(self.arc_filtered_radius, r)
+    #     print(
+    #         f"Arc Center: ({self.arc_filtered_center_x:.2f}, {self.arc_filtered_center_y:.2f}), Radius: {self.arc_filtered_radius:.2f} m"
+    #     )
+
+    def subsample_points(self, points, max_points=25):
+        """
+        Subsamples a list of (x, y) points to ensure the length does not exceed max_points.
+        Returns a new list of evenly spaced points.
+        """
+        n = len(points)
+        if n <= max_points:
+            return points  # no subsampling needed
+
+        step = n / max_points
+        indices = [int(i * step) for i in range(max_points)]
+        return [points[i] for i in indices]
+
     def estimate_arc_center(self):
+        """
+        Fit a circle to the current motion arc assuming a soft constraint on radius.
+        Updates:
+            - self.arc_filtered_center_x
+            - self.arc_filtered_center_y
+            - self.arc_filtered_radius
+        """
         now = time.time()
+
         points = []
         total_arc_length = 0.0
         last_point = None
@@ -436,39 +532,85 @@ class PoseEstimator(threading.Thread):
         if total_arc_length < self.arc_length_min:
             return
 
-        points = list(reversed(points))  # chronological order
+        points = self.subsample_points(points, max_points=25)
+        # points.reverse()  # To preserve time order
 
-        # === Fit circle ===
-        cx, cy, r = self._fit_circle_numpy(points)
-        if cx is None or cy is None or r is None or r == 0:
-            return
+        # 2. Start from previous or average
+        xs, ys = zip(*points)
+        cx = (
+            self.arc_filtered_center_x
+            if self.arc_filtered_center_x is not None
+            else sum(xs) / len(xs)
+        )
+        cy = (
+            self.arc_filtered_center_y
+            if self.arc_filtered_center_y is not None
+            else sum(ys) / len(ys)
+        )
+        r = (
+            self.arc_filtered_radius
+            if self.arc_filtered_radius is not None
+            else self.expected_radius
+        )
 
-        # === Validate angle portion ===
-        # angles = [math.atan2(p[1] - cy, p[0] - cx) for p in points]
-        # min_angle = min(angles)
-        # max_angle = max(angles)
-        # arc_angle_deg = math.degrees(
-        #     (max_angle - min_angle + math.pi * 2) % (math.pi * 2)
-        # )
+        # 3. Gradient Descent
+        learning_rate = 0.001
+        radius_weight = 0.1
+        iterations = 5
 
-        # if arc_angle_deg < self.arc_portion_deg_min:
-        #     return  # arc too short to be reliable
+        for _ in range(iterations):
+            grad_cx = grad_cy = grad_r = 0.0
+            total_weight = 0
 
-        # === Exponential smoothing ===
-        if self.arc_filter_last_time is None:
-            alpha = 1.0
+            for x, y in points:
+                dx = cx - x
+                dy = cy - y
+                dist = math.hypot(dx, dy)
+                if dist < 1e-5:
+                    continue  # skip degenerate points
+
+                error = dist - r
+                grad_cx += (error * dx) / dist
+                grad_cy += (error * dy) / dist
+                grad_r += -error
+                total_weight += 1
+
+            if total_weight == 0:
+                return
+
+            # Normalize gradients
+            grad_cx /= total_weight
+            grad_cy /= total_weight
+            grad_r /= total_weight
+
+            # Soft radius penalty
+            r_error = r - self.expected_radius
+            grad_r += radius_weight * r_error
+
+            # Update
+            cx -= learning_rate * grad_cx
+            cy -= learning_rate * grad_cy
+            r -= learning_rate * grad_r
+
+        # 4. Smooth result
+        alpha = self.arc_filter_tau
+        if self.arc_filtered_center_x is None:
+            self.arc_filtered_center_x = cx
+            self.arc_filtered_center_y = cy
+            self.arc_filtered_radius = r
         else:
-            dt = now - self.arc_filter_last_time
-            alpha = 1 - math.exp(-dt / self.arc_filter_tau)
+            self.arc_filtered_center_x = (
+                alpha * cx + (1 - alpha) * self.arc_filtered_center_x
+            )
+            self.arc_filtered_center_y = (
+                alpha * cy + (1 - alpha) * self.arc_filtered_center_y
+            )
+            self.arc_filtered_radius = (
+                alpha * r + (1 - alpha) * self.arc_filtered_radius
+            )
 
-        self.arc_filter_last_time = now
-
-        def smooth(old, new):
-            return alpha * new + (1 - alpha) * old if old is not None else new
-
-        self.arc_filtered_center_x = smooth(self.arc_filtered_center_x, cx)
-        self.arc_filtered_center_y = smooth(self.arc_filtered_center_y, cy)
-        self.arc_filtered_radius = smooth(self.arc_filtered_radius, r)
-        # print(
-        #     f"Arc Center: ({self.arc_filtered_center_x:.2f}, {self.arc_filtered_center_y:.2f}), Radius: {self.arc_filtered_radius:.2f} m, Angle Portion: {arc_angle_deg:.2f}°"
-        # )
+        print(
+            f"[CircleFit] Center: ({self.arc_filtered_center_x:.2f}, {self.arc_filtered_center_y:.2f}), "
+            f"Radius: {self.arc_filtered_radius:.2f} mm, "
+            f"[ArcFit] Using {len(points)} points for circle fit."
+        )

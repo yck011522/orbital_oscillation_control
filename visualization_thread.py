@@ -189,7 +189,7 @@ class PoseVisualizer(threading.Thread):
         # You can paste your full polar panel drawing code here unchanged,
         # wrapped inside this method and using `self.polar_size`, etc.
         polar_img = np.ones((*self.polar_size, 3), dtype=np.uint8) * 255
-
+        # return polar_img
         ## === LEFT PANEL: Polar View ===
         center = (self.polar_size[1] // 2, self.polar_size[0] // 2)
 
@@ -295,7 +295,9 @@ class PoseVisualizer(threading.Thread):
             py = int(center[1] - dy)
 
             cv2.circle(polar_img, (px, py), 8, (255, 0, 0), -1)  # blue dot
-            cv2.putText(polar_img, "Tilt Dir", (px + 10, py), FONT, 0.5, (0, 0, 0), 1)
+            cv2.putText(
+                polar_img, "Tilt Vector", (px + 10, py), FONT, 0.5, (0, 0, 0), 1
+            )
 
         # === Draw estimated arc center and fitted circle ===
         cx = getattr(self.pose_estimator, "arc_filtered_center_x", None)
@@ -310,11 +312,22 @@ class PoseVisualizer(threading.Thread):
 
             # Draw arc center dot
             cv2.circle(polar_img, (cx_px, cy_px), 5, (0, 0, 255), -1)  # red dot
-
+            cv2.putText(
+                polar_img, "Traj Ctr", (cx_px + 10, cy_px), FONT, 0.5, (0, 0, 0), 1
+            )
             # Draw estimated circle
             cv2.circle(
                 polar_img, (cx_px, cy_px), radius_px, (0, 0, 255), 1
             )  # thin red circle
+            cv2.putText(
+                polar_img,
+                f"r = {r:.2f}",
+                (cx_px + 10, cy_px + 15),
+                FONT,
+                0.5,
+                (0, 0, 0),
+                1,
+            )
 
         return polar_img
 
@@ -322,7 +335,7 @@ class PoseVisualizer(threading.Thread):
         # You can paste your full time history panel drawing code here unchanged,
         # replacing globals like TIME_WINDOW or POS_RANGE with method-local or self variables.
         time_img = np.ones((*self.timeplot_size, 3), dtype=np.uint8) * 255
-
+        # return time_img
         # --- Right panel plot configuration ---
         TIME_WINDOW = 10.0  # seconds
 

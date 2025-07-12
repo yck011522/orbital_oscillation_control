@@ -13,7 +13,7 @@ if __name__ == "__main__":
     if USE_LIVE_SYSTEM:
         pose_estimator = PoseEstimator(sensor_data_stream())
     else:
-        pose_estimator = PoseEstimator("sensor_recording/glass02.csv")
+        pose_estimator = PoseEstimator("sensor_recording/glass01.csv")
     pose_estimator.start()
 
     # Start Controller
@@ -28,7 +28,12 @@ if __name__ == "__main__":
     while True:
         # print(f"Pose Frequency: {pose_estimator.freq_estimator.smoothed_freq :.2f} Hz, Controller Frequency: {controller.freq_estimator.smoothed_freq :.2f} Hz")
         # print(f"Pose Estimator State: {pose_estimator.get_phase()}")
-        time.sleep(0.05)
+        time.sleep(0.2)
+        # print(
+        #     f"Visualization Thread Frequency: {visualizer.freq_estimator.smoothed_freq:.2f} Hz, "
+        #     f"Controller Frequency: {controller.freq_estimator.smoothed_freq:.2f} Hz, "
+        #     f"Pose Estimator Frequency: {pose_estimator.freq_estimator.smoothed_freq:.2f} Hz"
+        # )
     # Wait until everything is done
     controller.join()
     visualizer.join()

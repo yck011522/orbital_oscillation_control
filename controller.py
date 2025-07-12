@@ -167,12 +167,12 @@ class Controller(threading.Thread):
 
         if in_active_range:
             # Accelerate upward
-            print("Accelerate upward")
+            # print("Accelerate upward")
             self._current_tilt += self.acceleration_rate * self.delta_time
             self._current_tilt = min(self._current_tilt, self.max_tilt)
         else:
             # Decelerate downward
-            print("Decelerate downward")
+            # print("Decelerate downward")
             self._current_tilt -= self.deceleration_rate * self.delta_time
             self._current_tilt = max(self._current_tilt, 0.0)
 
@@ -217,6 +217,7 @@ class Controller(threading.Thread):
         now = time.time()
         dt = now - self.last_motor_time
         self.last_motor_time = now
+        # Clamp target values to within tilt vector limits for SAFETY
         target_tilt = max(-self.max_tilt, min(self.max_tilt, target_tilt))
 
         # Convert to radians
@@ -228,6 +229,12 @@ class Controller(threading.Thread):
         L_x_minus = actuator_length(-theta_x) + self.actuator_value_offset
         L_y_plus = actuator_length(theta_y) + self.actuator_value_offset
         L_y_minus = actuator_length(-theta_y) + self.actuator_value_offset
+
+        # clamp actuator targets to within soft limits for SAFETY
+        L_x_plus = max(0.1, min(L_x_plus, 49.0))
+        L_x_minus = max(0.1, min(L_x_minus, 49.0))
+        L_y_plus = max(0.1, min(L_y_plus, 49.0))
+        L_y_minus = max(0.1, min(L_y_minus, 49.0))
 
         target_positions = {1: L_x_plus, 2: L_y_minus, 3: L_x_minus, 4: L_y_plus}
 
