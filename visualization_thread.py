@@ -62,24 +62,47 @@ class PoseVisualizer(threading.Thread):
         cv2.namedWindow("Pose Visualization")
 
         cv2.createTrackbar(
-            "Act Start", "Pose Visualization", self.controller.phase_start, 360, self.on_slider_change
+            "Act Start",
+            "Pose Visualization",
+            self.controller.phase_start,
+            360,
+            self.on_slider_change,
         )
         cv2.createTrackbar(
-            "Act End", "Pose Visualization", self.controller.phase_end, 360, self.on_slider_change
+            "Act End",
+            "Pose Visualization",
+            self.controller.phase_end,
+            360,
+            self.on_slider_change,
         )
         cv2.createTrackbar(
-            "Lead Angle", "Pose Visualization", self.controller.lead_angle_deg, 180, self.on_slider_change
+            "Lead Angle",
+            "Pose Visualization",
+            self.controller.lead_angle_deg,
+            180,
+            self.on_slider_change,
         )
         cv2.createTrackbar(
-            "Tilt Acc x100", "Pose Visualization", (int)(self.controller.acceleration_rate * 100), 100, self.on_slider_change
+            "Tilt Acc x100",
+            "Pose Visualization",
+            (int)(self.controller.acceleration_rate * 100),
+            100,
+            self.on_slider_change,
         )
         cv2.createTrackbar(
-            "Tilt Dec x100", "Pose Visualization", (int)(self.controller.deceleration_rate * 100), 100, self.on_slider_change
+            "Tilt Dec x100",
+            "Pose Visualization",
+            (int)(self.controller.deceleration_rate * 100),
+            100,
+            self.on_slider_change,
         )
         cv2.createTrackbar(
-            "Max Tilt x100", "Pose Visualization",  (int)(self.controller.max_tilt *100), 100, self.on_slider_change
+            "Max Tilt x100",
+            "Pose Visualization",
+            (int)(self.controller.max_tilt * 100),
+            100,
+            self.on_slider_change,
         )
-        
 
         while not self.pose_estimator.is_finished():
             self._render_frame()
@@ -118,7 +141,16 @@ class PoseVisualizer(threading.Thread):
             lines.append(f"Ctrl Freq:  {self.controller.freq_estimator.get():.1f} Hz")
         for i, text in enumerate(lines):
             y = 20 + i * 20
-            cv2.putText(canvas, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5,(255, 255, 255), 1, cv2.LINE_AA)
+            cv2.putText(
+                canvas,
+                text,
+                (10, y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
 
         # === Draw Controller State Info ===
         if self.controller is not None:
@@ -126,12 +158,14 @@ class PoseVisualizer(threading.Thread):
                 self.controller.STATE_WAIT_TILL_STATIONARY: "WAIT_TILL_STATIONARY",
                 self.controller.STATE_DELAY_BEFORE_PUMP: "DELAY_BEFORE_PUMP",
                 self.controller.STATE_PUMP: "PUMP",
-                self.controller.STATE_DECAY: "DECAY"
+                self.controller.STATE_DECAY: "DECAY",
             }.get(self.controller.state, "UNKNOWN")
 
             control_func_name = "None"
             if self.controller.state == self.controller.STATE_PUMP:
-                pose_state = self.pose_estimator.get_latest_state().get("motion_state", None)
+                pose_state = self.pose_estimator.get_latest_state().get(
+                    "motion_state", None
+                )
                 func = self.controller.control_functions.get(pose_state, None)
                 control_func_name = func.__name__ if func else "None"
 
@@ -147,7 +181,9 @@ class PoseVisualizer(threading.Thread):
 
             for i, line in enumerate(reversed(text_lines)):  # draw bottom-up
                 y = y_base - i * line_height
-                cv2.putText(canvas, line, (x, y), FONT, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+                cv2.putText(
+                    canvas, line, (x, y), FONT, 0.5, (255, 255, 255), 1, cv2.LINE_AA
+                )
 
     def _draw_polar_view(self, history, shared_state):
         # You can paste your full polar panel drawing code here unchanged,
@@ -261,6 +297,24 @@ class PoseVisualizer(threading.Thread):
             cv2.circle(polar_img, (px, py), 8, (255, 0, 0), -1)  # blue dot
             cv2.putText(polar_img, "Tilt Dir", (px + 10, py), FONT, 0.5, (0, 0, 0), 1)
 
+        # === Draw estimated arc center and fitted circle ===
+        cx = getattr(self.pose_estimator, "arc_filtered_center_x", None)
+        cy = getattr(self.pose_estimator, "arc_filtered_center_y", None)
+        r = getattr(self.pose_estimator, "arc_filtered_radius", None)
+
+        if cx is not None and cy is not None and r is not None:
+            # All values are in mm, just like CoP trail
+            cx_px = int(center[0] + cx * SCALE)
+            cy_px = int(center[1] - cy * SCALE)  # Y flipped for image coordinates
+            radius_px = int(r * SCALE)
+
+            # Draw arc center dot
+            cv2.circle(polar_img, (cx_px, cy_px), 5, (0, 0, 255), -1)  # red dot
+
+            # Draw estimated circle
+            cv2.circle(
+                polar_img, (cx_px, cy_px), radius_px, (0, 0, 255), 1
+            )  # thin red circle
 
         return polar_img
 

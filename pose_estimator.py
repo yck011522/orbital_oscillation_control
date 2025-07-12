@@ -4,6 +4,7 @@ from collections import deque
 import pandas as pd
 from timing_utils import FrequencyEstimator
 import math
+import numpy as np
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Angle and Direction Convention (used throughout PoseEstimator)
@@ -30,6 +31,7 @@ import math
 #   filtering, to reduce jitter from sensor noise.
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class PoseEstimator(threading.Thread):
     def __init__(self, source, history_size=1000):
         super().__init__(daemon=True, name="PoseEstimator")
@@ -50,7 +52,7 @@ class PoseEstimator(threading.Thread):
         self.velocity_filter_last_time = None
 
         self.filtered_acceleration = 0.0
-        self.acceleration_filter_tau = 0.5   # Larger value for more smoothing
+        self.acceleration_filter_tau = 0.5  # Larger value for more smoothing
         self.acceleration_filter_last_time = None
 
         self.state = {}
@@ -59,8 +61,22 @@ class PoseEstimator(threading.Thread):
         self.ready_flag = threading.Event()
         self.finished_flag = threading.Event()
 
+        # Reversal tracking parameters
         self.reversal_times = deque(maxlen=20)
         self.DEADBAND_THRESHOLD = 0.0
+
+        # Circle fitting parameters
+        self.arc_length_min = 150  # look back for this many mm
+        self.arc_history_min_points = 5  # minimum number of points to fit an arc
+        self.arc_history_time_sec_max = (
+            3.0  # look further back this many seconds if distance is not enough
+        )
+        self.arc_portion_deg_min = 5.0  # minimum angle portion to consider a valid arc
+        self.arc_filter_tau = 4.0  # Larger value for more smoothing
+        self.arc_filter_last_time = None
+        self.arc_filtered_center_x = None
+        self.arc_filtered_center_y = None
+        self.arc_filtered_radius = None
 
         self.stationary_time_window = 2.0
         self.stationary_velocity_threshold = 1.0
@@ -100,12 +116,14 @@ class PoseEstimator(threading.Thread):
                 while time.time() < target_wall_time:
                     time.sleep(0.001)
 
-                self._process_row({
-                    "angle": row["Angle (deg)"],
-                    "cop_x": row["COP_X (m)"],
-                    "cop_y": row["COP_Y (m)"],
-                    "total_weight": row["TotalWeight (kg)"],
-                })
+                self._process_row(
+                    {
+                        "angle": row["Angle (deg)"],
+                        "cop_x": row["COP_X (m)"],
+                        "cop_y": row["COP_Y (m)"],
+                        "total_weight": row["TotalWeight (kg)"],
+                    }
+                )
 
             self.finished_flag.set()
 
@@ -121,6 +139,7 @@ class PoseEstimator(threading.Thread):
         angle = self._estimate_angle(row["cop_x"], row["cop_y"])
         velocity = self._estimate_velocity()
         acceleration = self._estimate_acceleration()
+        self.estimate_arc_center()
         self._check_velocity_reversal()
 
         if self.last_velocity * velocity < 0:
@@ -161,7 +180,6 @@ class PoseEstimator(threading.Thread):
         diff = (a1 - a0 + 180) % 360 - 180
         return diff
 
-
     def _estimate_angle(self, raw_cop_x, raw_cop_y):
         now = time.time()
 
@@ -182,7 +200,6 @@ class PoseEstimator(threading.Thread):
 
         angle_rad = math.atan2(self.filtered_cop_y, self.filtered_cop_x)
         return math.degrees(angle_rad)
-
 
     def _estimate_velocity(self, window=5):
         if len(self.history) < window:
@@ -348,7 +365,9 @@ class PoseEstimator(threading.Thread):
             return 0.0
 
         t_since_last = now - t_curr
-        normalized_phase = min(1.0, max(0.0, t_since_last / half_period))  # clamp to [0,1]
+        normalized_phase = min(
+            1.0, max(0.0, t_since_last / half_period)
+        )  # clamp to [0,1]
 
         # Use velocity sign to infer direction
         latest_velocity = self.state.get("velocity", 0.0)
@@ -357,10 +376,99 @@ class PoseEstimator(threading.Thread):
         else:
             return 180.0 + normalized_phase * 180.0  # CCW half
 
-
     def get_direction(self):
         """
         Returns:
             True if moving in positive direction, False if negative.
         """
         return self.state.get("velocity", 0.0) > 0
+
+    def _fit_circle_numpy(self, points):
+        """
+        Fit circle using linear least squares.
+        Returns: (center_x, center_y, radius)
+        """
+        x = np.array([p[0] for p in points])
+        y = np.array([p[1] for p in points])
+        A = np.c_[2 * x, 2 * y, np.ones(len(points))]
+        b = x**2 + y**2
+
+        try:
+            sol, _, _, _ = np.linalg.lstsq(A, b, rcond=None)
+            cx, cy = sol[0], sol[1]
+            r = np.sqrt(sol[2] + cx**2 + cy**2)
+            return cx, cy, r
+        except np.linalg.LinAlgError:
+            return None, None, None
+
+    def estimate_arc_center(self):
+        now = time.time()
+        points = []
+        total_arc_length = 0.0
+        last_point = None
+
+        for state in reversed(self.history):
+            age = now - state["timestamp"]
+            if age > self.arc_history_time_sec_max:
+                break
+
+            x = state.get("cop_x")
+            y = state.get("cop_y")
+            if x is None or y is None:
+                continue
+
+            current_point = (x, y)
+            if last_point:
+                dist = math.hypot(x - last_point[0], y - last_point[1])
+                total_arc_length += dist
+
+            points.append(current_point)
+            last_point = current_point
+
+            if (
+                total_arc_length >= self.arc_length_min
+                and len(points) >= self.arc_history_min_points
+            ):
+                break  # Stop once we accumulate enough arc length
+
+        # if len(points) < 10:
+        #     return  # Too few points
+        if total_arc_length < self.arc_length_min:
+            return
+
+        points = list(reversed(points))  # chronological order
+
+        # === Fit circle ===
+        cx, cy, r = self._fit_circle_numpy(points)
+        if cx is None or cy is None or r is None or r == 0:
+            return
+
+        # === Validate angle portion ===
+        # angles = [math.atan2(p[1] - cy, p[0] - cx) for p in points]
+        # min_angle = min(angles)
+        # max_angle = max(angles)
+        # arc_angle_deg = math.degrees(
+        #     (max_angle - min_angle + math.pi * 2) % (math.pi * 2)
+        # )
+
+        # if arc_angle_deg < self.arc_portion_deg_min:
+        #     return  # arc too short to be reliable
+
+        # === Exponential smoothing ===
+        if self.arc_filter_last_time is None:
+            alpha = 1.0
+        else:
+            dt = now - self.arc_filter_last_time
+            alpha = 1 - math.exp(-dt / self.arc_filter_tau)
+
+        self.arc_filter_last_time = now
+
+        def smooth(old, new):
+            return alpha * new + (1 - alpha) * old if old is not None else new
+
+        self.arc_filtered_center_x = smooth(self.arc_filtered_center_x, cx)
+        self.arc_filtered_center_y = smooth(self.arc_filtered_center_y, cy)
+        self.arc_filtered_radius = smooth(self.arc_filtered_radius, r)
+        # print(
+        #     f"Arc Center: ({self.arc_filtered_center_x:.2f}, {self.arc_filtered_center_y:.2f}), Radius: {self.arc_filtered_radius:.2f} m, Angle Portion: {arc_angle_deg:.2f}°"
+        # )
