@@ -7,10 +7,15 @@ from timing_utils import FrequencyEstimator
 from pose_estimator import PoseEstimator
 import math
 
+
 class Controller(threading.Thread):
-    def __init__(self, pose_estimator: PoseEstimator, control_freq=100):
+    def __init__(
+        self, pose_estimator: PoseEstimator, control_freq=100, live_output=True
+    ):
         super().__init__(daemon=True, name="Controller")
         self.pose_estimator = pose_estimator
+        self.live_output = live_output
+
         self.control_freq = control_freq
         self.stop_event = threading.Event()
 
@@ -33,12 +38,12 @@ class Controller(threading.Thread):
         self.control_functions = {
             1: self.control_stationary,
             2: self.control_oscillation,
-            3: self.control_full_rotation
+            3: self.control_full_rotation,
         }
 
         # Control policy parameters
         self._current_tilt = 0.0
-        self._current_azimuth = 0.0 
+        self._current_azimuth = 0.0
 
         # You can populate these via slider/UI later
         self.phase_start = 95
@@ -49,14 +54,18 @@ class Controller(threading.Thread):
         self.lead_angle_deg = 90  # lead angle for azimuth
 
         # For full rotation control
-        self.full_rotation_tilt = 0.45         # degrees (constant tilt to maintain)
-        self.full_rotation_lead_angle = 90.0   # degrees ahead of current object angle
+        self.full_rotation_tilt = 0.45  # degrees (constant tilt to maintain)
+        self.full_rotation_lead_angle = 90.0  # degrees ahead of current object angle
 
         # Serial connection for motor control
-        self.ser = open_serial()
-        if not home_all_motors(self.ser, settle_position_mm=28.1):
-            print("⚠️ Homing failed. Exiting controller.")
-            exit()
+        if self.live_output:
+            self.ser = open_serial()
+            homing_result = home_all_motors(self.ser, settle_position_mm=28.1)
+            if not homing_result:
+                print("⚠️ Homing failed. Exiting controller.")
+                exit()
+        else:
+            print("Motors homing skipped in non-live mode.")
 
         # Motor control parameters
         self.prev_positions = {1: None, 2: None, 3: None, 4: None}
@@ -71,7 +80,7 @@ class Controller(threading.Thread):
         self.freq_estimator = FrequencyEstimator(alpha=0.2)
 
     def run(self):
-        
+
         while not self.pose_estimator.is_ready():
             time.sleep(0.01)
 
@@ -106,14 +115,17 @@ class Controller(threading.Thread):
             elif self.state == self.STATE_PUMP:
                 pose_state = object_state["motion_state"]
                 if pose_state in self.control_functions:
-                    target_tilt, target_azimuth = self.control_functions[pose_state](object_state)
-                    print(f"Control Target Tilt: {target_tilt:.2f} degrees, Azimuth: {target_azimuth:.2f} degrees")
+                    target_tilt, target_azimuth = self.control_functions[pose_state](
+                        object_state
+                    )
+                    print(
+                        f"Control Target Tilt: {target_tilt:.2f} degrees, Azimuth: {target_azimuth:.2f} degrees"
+                    )
                     # Send target to actuator here
                     self._current_tilt = target_tilt
                     self._current_azimuth = target_azimuth
                     self.send_target_to_motor(target_tilt, target_azimuth)
 
-                    
                 # Logic to transition to decay state
                 if object_state["motion_state"] == 3:  # Full rotation reached
                     if time.time() - self.full_rotation_start_time > self.pump_duration:
@@ -127,17 +139,19 @@ class Controller(threading.Thread):
                     self.state = self.STATE_WAIT_TILL_STATIONARY
 
             self.freq_estimator.update()
-        
-        send_absolute_position_mm(self.ser, 21.5, 0, speed_rpm=200)
-        self.ser.close()
 
+        if self.live_output:
+            print("Controller finished. Sending final position to motors.")
+            # Send final position to motors before exiting
+            send_absolute_position_mm(self.ser, 21.5, 0, speed_rpm=200)
+            self.ser.close()
 
     def stop(self):
         self.stop_event.set()
 
     # === Control Functions ===
     def control_stationary(self, state):
-        return 0.0 , 0.0  # No movement
+        return 0.0, 0.0  # No movement
 
     def control_oscillation(self, state):
         """
@@ -176,7 +190,6 @@ class Controller(threading.Thread):
         # === Return result ===
         return self._current_tilt, azimuth_deg
 
-
     def control_full_rotation(self, state):
         """
         Maintains a constant tilt and points azimuth slightly ahead of the object
@@ -198,8 +211,8 @@ class Controller(threading.Thread):
         # Normalize azimuth to [0, 360]
         azimuth_deg = (azimuth_deg + 360) % 360
 
-        return  self._current_tilt, azimuth_deg
-    
+        return self._current_tilt, azimuth_deg
+
     def send_target_to_motor(self, target_tilt, target_azimuth):
         now = time.time()
         dt = now - self.last_motor_time
@@ -211,17 +224,12 @@ class Controller(threading.Thread):
         azimuth_rad = math.radians(target_azimuth)
         theta_x, theta_y = polar_to_tilt_components(tilt_rad, azimuth_rad)
 
-        L_x_plus  = actuator_length(theta_x) + self.actuator_value_offset
+        L_x_plus = actuator_length(theta_x) + self.actuator_value_offset
         L_x_minus = actuator_length(-theta_x) + self.actuator_value_offset
-        L_y_plus  = actuator_length(theta_y) + self.actuator_value_offset
+        L_y_plus = actuator_length(theta_y) + self.actuator_value_offset
         L_y_minus = actuator_length(-theta_y) + self.actuator_value_offset
 
-        target_positions = {
-            1: L_x_plus,
-            2: L_y_minus,
-            3: L_x_minus,
-            4: L_y_plus
-        }
+        target_positions = {1: L_x_plus, 2: L_y_minus, 3: L_x_minus, 4: L_y_plus}
 
         estimated_rpm = {}
         for motor_id, pos in target_positions.items():
@@ -234,9 +242,14 @@ class Controller(threading.Thread):
                 estimated_rpm[motor_id] = self.default_speed_rpm
 
         # Send to motors
-        send_absolute_position_mm(self.ser, L_x_plus, 1, speed_rpm=estimated_rpm[1])
-        send_absolute_position_mm(self.ser, L_y_minus, 2, speed_rpm=estimated_rpm[2])
-        send_absolute_position_mm(self.ser, L_x_minus, 3, speed_rpm=estimated_rpm[3])
-        send_absolute_position_mm(self.ser, L_y_plus, 4, speed_rpm=estimated_rpm[4])
+        if self.live_output:
+            send_absolute_position_mm(self.ser, L_x_plus, 1, speed_rpm=estimated_rpm[1])
+            send_absolute_position_mm(
+                self.ser, L_y_minus, 2, speed_rpm=estimated_rpm[2]
+            )
+            send_absolute_position_mm(
+                self.ser, L_x_minus, 3, speed_rpm=estimated_rpm[3]
+            )
+            send_absolute_position_mm(self.ser, L_y_plus, 4, speed_rpm=estimated_rpm[4])
 
         self.prev_positions = target_positions
