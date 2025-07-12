@@ -41,11 +41,9 @@ class Controller(threading.Thread):
             3: self.control_full_rotation,
         }
 
-        # Control policy parameters
-        self._current_tilt = 0.0
-        self._current_azimuth = 0.0
-
         # You can populate these via slider/UI later
+
+        # Oscillation control mode parameters
         self.phase_start = 95
         self.phase_end = 260
         self.max_tilt = 0.65  # degrees
@@ -53,19 +51,13 @@ class Controller(threading.Thread):
         self.deceleration_rate = 0.28  # deg/sec²
         self.lead_angle_deg = 90  # lead angle for azimuth
 
-        # For full rotation control
+        # Full rotation control mode parameters
         self.full_rotation_tilt = 0.45  # degrees (constant tilt to maintain)
         self.full_rotation_lead_angle = 90.0  # degrees ahead of current object angle
 
-        # Serial connection for motor control
-        if self.live_output:
-            self.ser = open_serial()
-            homing_result = home_all_motors(self.ser, settle_position_mm=28.1)
-            if not homing_result:
-                print("⚠️ Homing failed. Exiting controller.")
-                exit()
-        else:
-            print("Motors homing skipped in non-live mode.")
+        # Control output parameters
+        self._current_tilt = 0.0
+        self._current_azimuth = 0.0
 
         # Motor control parameters
         self.prev_positions = {1: None, 2: None, 3: None, 4: None}
@@ -78,6 +70,16 @@ class Controller(threading.Thread):
         self.last_control_time = time.time()
         self.delta_time = 0.0
         self.freq_estimator = FrequencyEstimator(alpha=0.2)
+
+        # Serial connection for motor control
+        if self.live_output:
+            self.ser = open_serial()
+            homing_result = home_all_motors(self.ser, settle_position_mm=28.1)
+            if not homing_result:
+                print("⚠️ Homing failed. Exiting controller.")
+                exit()
+        else:
+            print("Motors homing skipped in non-live mode.")
 
     def run(self):
 

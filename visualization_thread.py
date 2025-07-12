@@ -103,7 +103,14 @@ class PoseVisualizer(threading.Thread):
             100,
             self.on_slider_change,
         )
-
+        cv2.createTrackbar(
+            "FullRotation Tilt x100",
+            "Pose Visualization",
+            (int)(self.controller.full_rotation_tilt * 100),
+            100,
+            # Lambda function to handle full rotation
+            lambda x: setattr(self.controller, "full_rotation_tilt", x / 100.0),
+        )
         while not self.pose_estimator.is_finished():
             self._render_frame()
             time.sleep(1 / 30.0)
