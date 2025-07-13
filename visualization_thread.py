@@ -11,6 +11,7 @@ FONT = cv2.FONT_HERSHEY_SIMPLEX
 
 SAFETY_CIRCLE_RADIUS_MM = 200
 SCALE = 2  # pixels per mm (800 px represents 200 mm)
+SCALE_DEGREES = 200  # pixels per degree (800 px represents +-2 degrees)
 
 
 class PoseVisualizer(threading.Thread):
@@ -40,9 +41,6 @@ class PoseVisualizer(threading.Thread):
         phase_start = cv2.getTrackbarPos("Act Start", "Pose Visualization")
         phase_end = cv2.getTrackbarPos("Act End", "Pose Visualization")
         lead_angle_deg = cv2.getTrackbarPos("Lead Angle", "Pose Visualization")
-        tilt_acc_x100 = cv2.getTrackbarPos("Tilt Acc x100", "Pose Visualization")
-        tilt_dec_x100 = cv2.getTrackbarPos("Tilt Dec x100", "Pose Visualization")
-        max_tilt_x100 = cv2.getTrackbarPos("Max Tilt x100", "Pose Visualization")
         if self.controller is not None:
             if phase_start > 0:
                 self.controller.phase_start = phase_start
@@ -50,12 +48,12 @@ class PoseVisualizer(threading.Thread):
                 self.controller.phase_end = phase_end
             if lead_angle_deg > 0:
                 self.controller.lead_angle_deg = lead_angle_deg
-            if tilt_acc_x100 > 0:
-                self.controller.acceleration_rate = tilt_acc_x100 / 100.0
-            if tilt_dec_x100 > 0:
-                self.controller.deceleration_rate = tilt_dec_x100 / 100.0
-            if max_tilt_x100 > 0:
-                self.controller.max_tilt = max_tilt_x100 / 100.0
+
+    def on_slider_acc_change(self, x):
+        """Callback for track-bar changes."""
+        if self.controller is not None:
+            setattr(self.controller, "acceleration_rate", x / 100.0),
+            setattr(self.controller, "deceleration_rate", x / 100.0),
 
     def run(self):
 
@@ -87,21 +85,16 @@ class PoseVisualizer(threading.Thread):
             "Pose Visualization",
             (int)(self.controller.acceleration_rate * 100),
             100,
-            self.on_slider_change,
-        )
-        cv2.createTrackbar(
-            "Tilt Dec x100",
-            "Pose Visualization",
-            (int)(self.controller.deceleration_rate * 100),
-            100,
-            self.on_slider_change,
+            # Set both acceleration_rate and deceleration_rate
+            self.on_slider_acc_change,
         )
         cv2.createTrackbar(
             "Max Tilt x100",
             "Pose Visualization",
             (int)(self.controller.max_tilt * 100),
             100,
-            self.on_slider_change,
+            # Lambda function to handle max tilt
+            lambda x: setattr(self.controller, "max_tilt", x / 100.0),
         )
         cv2.createTrackbar(
             "FullRotation Tilt x100",
@@ -110,6 +103,14 @@ class PoseVisualizer(threading.Thread):
             100,
             # Lambda function to handle full rotation
             lambda x: setattr(self.controller, "full_rotation_tilt", x / 100.0),
+        )
+        cv2.createTrackbar(
+            "Center Restoring Gain x1000000",
+            "Pose Visualization",
+            int(self.controller.center_restoring_gain * 1000000),
+            100,
+            # Lambda function to handle center restoring gain
+            lambda x: setattr(self.controller, "center_restoring_gain", x / 1000000.0),
         )
         while not self.pose_estimator.is_finished():
             self._render_frame()
@@ -168,17 +169,8 @@ class PoseVisualizer(threading.Thread):
                 self.controller.STATE_DECAY: "DECAY",
             }.get(self.controller.state, "UNKNOWN")
 
-            control_func_name = "None"
-            if self.controller.state == self.controller.STATE_PUMP:
-                pose_state = self.pose_estimator.get_latest_state().get(
-                    "motion_state", None
-                )
-                func = self.controller.control_functions.get(pose_state, None)
-                control_func_name = func.__name__ if func else "None"
-
             text_lines = [
                 f"FSM: {state_name}",
-                f"Ctrl Func: {control_func_name}",
             ]
 
             # Draw text at bottom-left corner
@@ -246,6 +238,35 @@ class PoseVisualizer(threading.Thread):
                 polar_img, label, label_pos, FONT, 0.5, TEXT_COLOR, 1, cv2.LINE_AA
             )
 
+            # === Draw degrees label below the ring ===
+            degrees_label = f"{r_px / SCALE_DEGREES:.2f} deg"
+            (text_w, text_h), _ = cv2.getTextSize(degrees_label, FONT, 0.5, 1)
+            degrees_label_pos = (
+                center[0] - text_w // 2,
+                center[1] + r_px + text_h + 10,
+            )
+            # Draw background rectangle for degrees label
+            rect_top_left = (
+                degrees_label_pos[0] - 4,
+                degrees_label_pos[1] - text_h - 4,
+            )
+            rect_bottom_right = (
+                degrees_label_pos[0] + text_w + 4,
+                degrees_label_pos[1] + 4,
+            )
+            cv2.rectangle(polar_img, rect_top_left, rect_bottom_right, LIGHT_GREY, -1)
+            # Draw text
+            cv2.putText(
+                polar_img,
+                degrees_label,
+                degrees_label_pos,
+                FONT,
+                0.5,
+                TEXT_COLOR,
+                1,
+                cv2.LINE_AA,
+            )
+
         # Draw safety circle again (outline on top)
         cv2.circle(
             polar_img, center, int(SAFETY_CIRCLE_RADIUS_MM * SCALE), (100, 100, 255), 3
@@ -284,19 +305,16 @@ class PoseVisualizer(threading.Thread):
 
         # === Draw current tilt direction as a dot ===
         if self.controller is not None:
-            tilt_plot_scale = 400
-            tilt = getattr(self.controller, "_current_tilt", 0.0)
-            azimuth_deg = getattr(self.controller, "_current_azimuth", 0.0)
 
-            # Normalize radius to [0, max_visual_radius_px]
-            radius_px = int(tilt * tilt_plot_scale)  # assuming 1.2° max tilt
+            tilt = getattr(self.controller, "target_tilt", 0.0)
+            azimuth_deg = getattr(self.controller, "target_azimuth", 0.0)
 
             # Convert azimuth to radians
             azimuth_rad = math.radians(azimuth_deg)
 
             # Polar to cartesian conversion (Y-axis flipped for image coords)
-            dx = radius_px * math.cos(azimuth_rad)
-            dy = radius_px * math.sin(azimuth_rad)
+            dx = tilt * SCALE_DEGREES * math.cos(azimuth_rad)
+            dy = tilt * SCALE_DEGREES * math.sin(azimuth_rad)
 
             px = int(center[0] + dx)
             py = int(center[1] - dy)

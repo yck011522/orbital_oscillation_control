@@ -34,16 +34,11 @@ class Controller(threading.Thread):
         self.delay_duration = 2.0
         self.pump_duration = 10.0
 
-        # Control function registry (based on pose motion_state)
-        self.control_functions = {
-            1: self.control_stationary,
-            2: self.control_oscillation,
-            3: self.control_full_rotation,
-        }
-
-        # You can populate these via slider/UI later
-
         # Oscillation control mode parameters
+        self.oscillation_tilt = 0.0
+        self.oscillation_init_direction = True  # True for positive direction
+
+        # Phase control parameters
         self.phase_start = 95
         self.phase_end = 260
         self.max_tilt = 0.65  # degrees
@@ -55,9 +50,14 @@ class Controller(threading.Thread):
         self.full_rotation_tilt = 0.45  # degrees (constant tilt to maintain)
         self.full_rotation_lead_angle = 90.0  # degrees ahead of current object angle
 
+        # Center restoring vector parameters
+        self.center_restoring_gain = 0.000  # Gain for restoring vector towards center
+        self.center_restoring_vector_max = 0.5  # Maximum length of restoring vector
+
         # Control output parameters
-        self._current_tilt = 0.0
-        self._current_azimuth = 0.0
+        self.current_tilt_vector = (0.0, 0.0)  # Current tilt vector in XY coordinates
+        self.target_tilt = 0.0  # Current target tilt angle in degrees
+        self.target_azimuth = 0.0  # Current target azimuth angle in degrees
 
         # Motor control parameters
         self.prev_positions = {1: None, 2: None, 3: None, 4: None}
@@ -104,7 +104,8 @@ class Controller(threading.Thread):
             else:
                 self.state = self.state
 
-            # FSM Logic
+            # FSM Logic / Switch between control states
+            control_vector = (0.0, 0.0)
             if self.state == self.STATE_WAIT_TILL_STATIONARY:
                 if object_state["motion_state"] == 1:  # stationary
                     self.delay_timer_start = time.time()
@@ -115,18 +116,15 @@ class Controller(threading.Thread):
                     self.state = self.STATE_PUMP
 
             elif self.state == self.STATE_PUMP:
-                pose_state = object_state["motion_state"]
-                if pose_state in self.control_functions:
-                    target_tilt, target_azimuth = self.control_functions[pose_state](
-                        object_state
-                    )
-                    print(
-                        f"Control Target Tilt: {target_tilt:.2f} degrees, Azimuth: {target_azimuth:.2f} degrees"
-                    )
-                    # Send target to actuator here
-                    self._current_tilt = target_tilt
-                    self._current_azimuth = target_azimuth
-                    self.send_target_to_motor(target_tilt, target_azimuth)
+                # Pump control logic
+                if object_state["motion_state"] == 1:  # stationary
+                    control_vector = self.control_start_from_stationary(object_state)
+                elif object_state["motion_state"] == 2:  # oscillation
+                    control_vector = self.control_pump_oscillation(object_state)
+                elif object_state["motion_state"] == 3:  # full rotation
+                    control_vector = self.control_maintain_rotation(object_state)
+                else:
+                    print(f"Unknown motion state: {object_state['motion_state']}")
 
                 # Logic to transition to decay state
                 if object_state["motion_state"] == 3:  # Full rotation reached
@@ -140,6 +138,22 @@ class Controller(threading.Thread):
                 if object_state["motion_state"] == 1:  # back to stationary
                     self.state = self.STATE_WAIT_TILL_STATIONARY
 
+            # Compute center restoring vector
+            center_restoring_vector = self.control_center_restoring_vector(object_state)
+
+            # Send target to actuator here
+            total_target_vector = (
+                control_vector[0] + center_restoring_vector[0],
+                control_vector[1] + center_restoring_vector[1],
+            )
+
+            self.current_tilt_vector = total_target_vector
+            self.target_tilt, self.target_azimuth = self.tilt_vector_to_tilt_azimuth(
+                self.current_tilt_vector
+            )
+
+            self.send_target_to_motor(self.target_tilt, self.target_azimuth)
+
             self.freq_estimator.update()
 
         if self.live_output:
@@ -152,10 +166,32 @@ class Controller(threading.Thread):
         self.stop_event.set()
 
     # === Control Functions ===
-    def control_stationary(self, state):
-        return 0.0, 0.0  # No movement
+    def control_start_from_stationary(self, state):
+        obj_angle_deg = state["angle"]
+        azimuth_deg = obj_angle_deg - self.lead_angle_deg
+        # Normalize azimuth to [-180, 180] or [0, 360] if needed
+        azimuth_deg = (azimuth_deg + 360) % 360
 
-    def control_oscillation(self, state):
+        if getattr(self, "oscillation_init_direction_positive", None) is None:
+            self.oscillation_init_direction = True
+        if getattr(self, "oscillation_tilt", None) is None:
+            self.oscillation_tilt = 0.0
+
+        # Create a simple oscillation effect back and forth
+        if self.oscillation_init_direction:
+            self.oscillation_tilt += self.acceleration_rate * self.delta_time
+            if self.oscillation_tilt >= self.max_tilt:
+                self.oscillation_init_direction = False
+                self.oscillation_tilt = self.max_tilt
+        else:
+            self.oscillation_tilt -= self.deceleration_rate * self.delta_time
+            if self.oscillation_tilt <= 0.0:
+                self.oscillation_init_direction = True
+                self.oscillation_tilt = 0.0
+
+        return self.tilt_azimuth_to_vector(self.oscillation_tilt, azimuth_deg)
+
+    def control_pump_oscillation(self, state):
         """
         Calculates target tilt and azimuth based on oscillation phase.
         This function is called during the PUMP controller state.
@@ -164,19 +200,22 @@ class Controller(threading.Thread):
         phase_deg = state["phase"]
         obj_angle_deg = state["angle"]
 
+        if getattr(self, "oscillation_tilt", None) is None:
+            self.oscillation_tilt = 0.0
+
         # === TILT CONTROL ===
         in_active_range = self.phase_start <= phase_deg <= self.phase_end
 
         if in_active_range:
             # Accelerate upward
             # print("Accelerate upward")
-            self._current_tilt += self.acceleration_rate * self.delta_time
-            self._current_tilt = min(self._current_tilt, self.max_tilt)
+            self.oscillation_tilt += self.acceleration_rate * self.delta_time
+            self.oscillation_tilt = min(self.oscillation_tilt, self.max_tilt)
         else:
             # Decelerate downward
             # print("Decelerate downward")
-            self._current_tilt -= self.deceleration_rate * self.delta_time
-            self._current_tilt = max(self._current_tilt, 0.0)
+            self.oscillation_tilt -= self.deceleration_rate * self.delta_time
+            self.oscillation_tilt = max(self.oscillation_tilt, 0.0)
 
         # === AZIMUTH CONTROL ===
         # Lead angle applied only during deceleration half (e.g., CW→CCW)
@@ -190,9 +229,9 @@ class Controller(threading.Thread):
         azimuth_deg = (azimuth_deg + 360) % 360
 
         # === Return result ===
-        return self._current_tilt, azimuth_deg
+        return self.tilt_azimuth_to_vector(self.oscillation_tilt, azimuth_deg)
 
-    def control_full_rotation(self, state):
+    def control_maintain_rotation(self, state):
         """
         Maintains a constant tilt and points azimuth slightly ahead of the object
         to sustain rotation.
@@ -202,7 +241,9 @@ class Controller(threading.Thread):
         direction_is_forward = self.pose_estimator.get_direction()  # True for CW
 
         # === TILT ===
-        self._current_tilt = self.full_rotation_tilt  # hold constant
+        tilt_deg = (
+            self.full_rotation_tilt
+        )  # hold constant, need to change this to adaptive
 
         # === AZIMUTH ===
         if direction_is_forward:
@@ -213,7 +254,33 @@ class Controller(threading.Thread):
         # Normalize azimuth to [0, 360]
         azimuth_deg = (azimuth_deg + 360) % 360
 
-        return self._current_tilt, azimuth_deg
+        return self.tilt_azimuth_to_vector(tilt_deg, azimuth_deg)
+
+    def control_center_restoring_vector(self, state):
+        """
+        Computes the center restoring vector based on the current object center of rotation.
+        This vector is used to roll the object back to the center of the table.
+        """
+        arc_center_x = state["arc_center_x"]
+        arc_center_y = state["arc_center_y"]
+        arc_radius = state["arc_radius"]
+
+        # Calculate the restoring vector towards the center of the arc
+        restoring_vector_x = -arc_center_x * self.center_restoring_gain
+        restoring_vector_y = -arc_center_y * self.center_restoring_gain
+
+        # Limit the length of the restoring vector
+        restoring_vector_length = math.sqrt(
+            restoring_vector_x**2 + restoring_vector_y**2
+        )
+        if restoring_vector_length > self.center_restoring_vector_max:
+            restoring_vector_x = (
+                restoring_vector_x / restoring_vector_length
+            ) * self.center_restoring_vector_max
+            restoring_vector_y = (
+                restoring_vector_y / restoring_vector_length
+            ) * self.center_restoring_vector_max
+        return (restoring_vector_x, restoring_vector_y)
 
     def send_target_to_motor(self, target_tilt, target_azimuth):
         now = time.time()
@@ -262,3 +329,51 @@ class Controller(threading.Thread):
             send_absolute_position_mm(self.ser, L_y_plus, 4, speed_rpm=estimated_rpm[4])
 
         self.prev_positions = target_positions
+
+    def tilt_azimuth_to_vector(self, tilt_deg, azimuth_deg):
+        """
+        Converts tilt and azimuth angles in degrees to a XY vector.
+        """
+        tilt_rad = math.radians(tilt_deg)
+        azimuth_rad = math.radians(azimuth_deg)
+        x = math.sin(tilt_rad) * math.cos(azimuth_rad)
+        y = math.sin(tilt_rad) * math.sin(azimuth_rad)
+        return (x, y)
+
+    def tilt_vector_to_tilt_azimuth(self, vector):
+        """
+        Converts a XY vector to tilt and azimuth angles in degrees.
+        An inverse of tilt_azimuth_to_vector.
+        """
+        x, y = vector
+        tilt_rad = math.atan2(math.sqrt(x**2 + y**2), 1.0)
+        azimuth_rad = math.atan2(y, x)
+        tilt_deg = math.degrees(tilt_rad)
+        azimuth_deg = math.degrees(azimuth_rad)
+        azimuth_deg = (azimuth_deg + 360) % 360  # Normalize
+        return (tilt_deg, azimuth_deg)
+
+
+if __name__ == "__main__":
+    # Test tilt_azimuth_to_vector and tilt_vector_to_tilt_azimuth
+    controller = Controller(None, live_output=False)
+    # Example tilt and azimuth angles
+    tilt_deg = 1.2
+    azimuth_deg = 45.0
+    vector = controller.tilt_azimuth_to_vector(tilt_deg, azimuth_deg)
+    print(f"Vector from tilt {tilt_deg}° and azimuth {azimuth_deg}°: {vector}")
+    tilt_deg_out, azimuth_deg_out = controller.tilt_vector_to_tilt_azimuth(vector)
+    print(
+        f"Converted back to tilt {tilt_deg_out:.2f}° and azimuth {azimuth_deg_out:.2f}°"
+    )
+
+    # Automatically check all combinations of tilt and azimuth
+    for tilt in range(1, 13, 1):  # 0 to 90 degrees in steps of 10
+        tilt_deg = tilt * 0.1
+        for azimuth in range(0, 359, 10):  # 0 to 360 degrees in steps of 10
+            vector = controller.tilt_azimuth_to_vector(tilt_deg, azimuth)
+            tilt_out, azimuth_out = controller.tilt_vector_to_tilt_azimuth(vector)
+            assert (
+                abs(tilt_deg - tilt_out) < 0.1 and abs(azimuth - azimuth_out) < 0.1
+            ), f"Mismatch for tilt {tilt_deg}° and azimuth {azimuth}°: got {tilt_out:.2f}°, {azimuth_out:.2f}°"
+    print("All tilt/azimuth conversions passed successfully!")

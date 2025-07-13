@@ -13,7 +13,7 @@ if __name__ == "__main__":
     if USE_LIVE_SYSTEM:
         pose_estimator = PoseEstimator(sensor_data_stream())
     else:
-        pose_estimator = PoseEstimator("sensor_recording/glass01.csv")
+        pose_estimator = PoseEstimator("sensor_recording/glass02.csv")
     pose_estimator.start()
 
     # Start Controller

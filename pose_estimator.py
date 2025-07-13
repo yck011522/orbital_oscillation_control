@@ -142,7 +142,7 @@ class PoseEstimator(threading.Thread):
         angle = self._estimate_angle(row["cop_x"], row["cop_y"])
         velocity = self._estimate_velocity()
         acceleration = self._estimate_acceleration()
-        self.estimate_arc_center()
+        c_x, c_y, c_r = self.estimate_arc_center()
         self._check_velocity_reversal()
 
         if self.last_velocity * velocity < 0:
@@ -166,6 +166,9 @@ class PoseEstimator(threading.Thread):
             "phase": phase,
             "direction_positive": direction,
             "motion_state": motion_state,
+            "arc_center_x": c_x,
+            "arc_center_y": c_y,
+            "arc_radius": c_r,
         }
 
         # === Frequency computation ===
@@ -478,7 +481,7 @@ class PoseEstimator(threading.Thread):
 
     def subsample_points(self, points, max_points=25):
         """
-        Subsamples a list of (x, y) points to ensure the length does not exceed max_points.
+        Sub-samples a list of (x, y) points to ensure the length does not exceed max_points.
         Returns a new list of evenly spaced points.
         """
         n = len(points)
@@ -530,7 +533,11 @@ class PoseEstimator(threading.Thread):
         # if len(points) < 10:
         #     return  # Too few points
         if total_arc_length < self.arc_length_min:
-            return
+            return (
+                self.arc_filtered_center_x,
+                self.arc_filtered_center_y,
+                self.arc_filtered_radius,
+            )
 
         points = self.subsample_points(points, max_points=25)
         # points.reverse()  # To preserve time order
@@ -576,7 +583,11 @@ class PoseEstimator(threading.Thread):
                 total_weight += 1
 
             if total_weight == 0:
-                return
+                return (
+                    self.arc_filtered_center_x,
+                    self.arc_filtered_center_y,
+                    self.arc_filtered_radius,
+                )
 
             # Normalize gradients
             grad_cx /= total_weight
@@ -613,4 +624,9 @@ class PoseEstimator(threading.Thread):
             f"[CircleFit] Center: ({self.arc_filtered_center_x:.2f}, {self.arc_filtered_center_y:.2f}), "
             f"Radius: {self.arc_filtered_radius:.2f} mm, "
             f"[ArcFit] Using {len(points)} points for circle fit."
+        )
+        return (
+            self.arc_filtered_center_x,
+            self.arc_filtered_center_y,
+            self.arc_filtered_radius,
         )
