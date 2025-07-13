@@ -36,19 +36,6 @@ class PoseVisualizer(threading.Thread):
         self.polar_size = (canvas_height, canvas_width // 2)
         self.timeplot_size = (canvas_height, canvas_width // 2)
 
-    def on_slider_change(self, value):
-        """Callback for track-bar changes."""
-        phase_start = cv2.getTrackbarPos("Act Start", "Pose Visualization")
-        phase_end = cv2.getTrackbarPos("Act End", "Pose Visualization")
-        lead_angle_deg = cv2.getTrackbarPos("Lead Angle", "Pose Visualization")
-        if self.controller is not None:
-            if phase_start > 0:
-                self.controller.phase_start = phase_start
-            if phase_end > 0:
-                self.controller.phase_end = phase_end
-            if lead_angle_deg > 0:
-                self.controller.lead_angle_deg = lead_angle_deg
-
     def on_slider_acc_change(self, x):
         """Callback for track-bar changes."""
         if self.controller is not None:
@@ -64,21 +51,21 @@ class PoseVisualizer(threading.Thread):
             "Pose Visualization",
             self.controller.phase_start,
             360,
-            self.on_slider_change,
+            lambda x: setattr(self.controller, "phase_start", x),
         )
         cv2.createTrackbar(
             "Act End",
             "Pose Visualization",
             self.controller.phase_end,
             360,
-            self.on_slider_change,
+            lambda x: setattr(self.controller, "phase_end", x),
         )
         cv2.createTrackbar(
             "Lead Angle",
             "Pose Visualization",
             self.controller.lead_angle_deg,
             180,
-            self.on_slider_change,
+            lambda x: setattr(self.controller, "lead_angle_deg", x),
         )
         cv2.createTrackbar(
             "Tilt Acc x100",
