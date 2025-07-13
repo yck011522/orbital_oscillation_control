@@ -264,23 +264,19 @@ class Controller(threading.Thread):
         arc_center_x = state["arc_center_x"]
         arc_center_y = state["arc_center_y"]
         arc_radius = state["arc_radius"]
-
-        # Calculate the restoring vector towards the center of the arc
-        restoring_vector_x = -arc_center_x * self.center_restoring_gain
-        restoring_vector_y = -arc_center_y * self.center_restoring_gain
+        center_azimuth_deg = self.tilt_vector_to_tilt_azimuth(
+            (arc_center_x, arc_center_y)
+        )[1]
+        center_distance_to_table_center = math.sqrt(arc_center_x**2 + arc_center_y**2)
 
         # Limit the length of the restoring vector
-        restoring_vector_length = math.sqrt(
-            restoring_vector_x**2 + restoring_vector_y**2
-        )
-        if restoring_vector_length > self.center_restoring_vector_max:
-            restoring_vector_x = (
-                restoring_vector_x / restoring_vector_length
-            ) * self.center_restoring_vector_max
-            restoring_vector_y = (
-                restoring_vector_y / restoring_vector_length
-            ) * self.center_restoring_vector_max
-        return (restoring_vector_x, restoring_vector_y)
+        restoring_azimuth_deg = (
+            center_azimuth_deg + 180.0
+        ) % 360  # Pointing towards the center
+
+        restoring_tilt = center_distance_to_table_center * self.center_restoring_gain
+
+        return self.tilt_azimuth_to_vector(restoring_tilt, restoring_azimuth_deg)
 
     def send_target_to_motor(self, target_tilt, target_azimuth):
         now = time.time()

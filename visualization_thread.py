@@ -105,12 +105,12 @@ class PoseVisualizer(threading.Thread):
             lambda x: setattr(self.controller, "full_rotation_tilt", x / 100.0),
         )
         cv2.createTrackbar(
-            "Center Restoring Gain x1000000",
+            "Center Restoring Gain x10000",
             "Pose Visualization",
-            int(self.controller.center_restoring_gain * 1000000),
+            int(self.controller.center_restoring_gain * 10000),
             100,
             # Lambda function to handle center restoring gain
-            lambda x: setattr(self.controller, "center_restoring_gain", x / 1000000.0),
+            lambda x: setattr(self.controller, "center_restoring_gain", x / 10000.0),
         )
         while not self.pose_estimator.is_finished():
             self._render_frame()
