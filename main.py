@@ -5,8 +5,8 @@ from visualization_thread import PoseVisualizer
 from controller import Controller
 from sensor_utils import sensor_data_stream
 
-# USE_LIVE_SYSTEM = True
-USE_LIVE_SYSTEM = False
+USE_LIVE_SYSTEM = True
+# USE_LIVE_SYSTEM = False
 
 if __name__ == "__main__":
     # Start Pose Estimation

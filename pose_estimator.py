@@ -77,9 +77,11 @@ class PoseEstimator(threading.Thread):
         )
         self.arc_filter_last_time = None
         self.expected_radius = 115.0  # Expected radius in mm for the arc
+        self.expected_radius_clamp = [60,180]
         self.arc_filtered_center_x = 0  # None # Initialize to 0 for warm start
         self.arc_filtered_center_y = 0  # None # Initialize to 0 for warm start
         self.arc_filtered_radius = self.expected_radius  # Initialize to expected radius
+        self.arc_filtered_center_clamp = [-250, 250]
 
         self.stationary_time_window = 2.0
         self.stationary_velocity_threshold = 1.0
@@ -619,6 +621,24 @@ class PoseEstimator(threading.Thread):
             self.arc_filtered_radius = (
                 alpha * r + (1 - alpha) * self.arc_filtered_radius
             )
+
+        # 5. Clamp values to sainity range
+        if self.arc_filtered_radius < self.expected_radius_clamp[0]:
+            self.arc_filtered_radius = self.expected_radius_clamp[0]
+        if self.arc_filtered_radius > self.expected_radius_clamp[1]:
+            self.arc_filtered_radius = self.expected_radius_clamp[1]
+
+        if self.arc_filtered_center_x < self.arc_filtered_center_clamp[0]:
+            self.arc_filtered_center_x = self.arc_filtered_center_clamp[0]
+        if self.arc_filtered_center_x > self.arc_filtered_center_clamp[1]:
+            self.arc_filtered_center_x = self.arc_filtered_center_clamp[1]
+
+        if self.arc_filtered_center_y < self.arc_filtered_center_clamp[0]:
+            self.arc_filtered_center_y = self.arc_filtered_center_clamp[0]
+        if self.arc_filtered_center_y > self.arc_filtered_center_clamp[1]:
+            self.arc_filtered_center_y = self.arc_filtered_center_clamp[1]
+
+        
 
         print(
             f"[CircleFit] Center: ({self.arc_filtered_center_x:.2f}, {self.arc_filtered_center_y:.2f}), "
