@@ -157,10 +157,10 @@ class PoseVisualizer(threading.Thread):
             }.get(self.controller.state, "UNKNOWN")
 
             text_lines = [
-                f"FSM: {state_name}",
+                f"FSM: {state_name} | {self.controller.control_method}",
             ]
 
-            # Draw text at bottom-left corner
+            # Draw text at bott8om-left corner
             x = 20
             line_height = 25
             y_base = canvas.shape[0] - 20  # 20 px above bottom edge

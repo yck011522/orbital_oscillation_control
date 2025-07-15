@@ -26,7 +26,8 @@ class Controller(threading.Thread):
         self.STATE_DECAY = 3
 
         self.state = self.STATE_WAIT_TILL_STATIONARY
-        self.debug_force_state = 2  # set this to 2 (PUMP) to force debug mode
+        self.control_method = ""
+        self.debug_force_state = None  # set this to 2 (PUMP) to force debug mode
 
         # Timing and parameters
         self.delay_timer_start = None
@@ -42,16 +43,16 @@ class Controller(threading.Thread):
         self.phase_start = 95
         self.phase_end = 260
         self.max_tilt = 0.65  # degrees
-        self.acceleration_rate = 0.28  # deg/sec²
-        self.deceleration_rate = 0.28  # deg/sec²
+        self.acceleration_rate = 0.20  # deg/sec²
+        self.deceleration_rate = 0.20  # deg/sec²
         self.lead_angle_deg = 90  # lead angle for azimuth
 
         # Full rotation control mode parameters
-        self.full_rotation_tilt = 0.45  # degrees (constant tilt to maintain)
+        self.full_rotation_tilt = 0.20  # degrees (constant tilt to maintain)
         self.full_rotation_lead_angle = 90.0  # degrees ahead of current object angle
 
         # Center restoring vector parameters
-        self.center_restoring_gain = 0.000  # Gain for restoring vector towards center
+        self.center_restoring_gain = 0.0085  # Gain for restoring vector towards center
         self.center_restoring_vector_max = 0.5  # Maximum length of restoring vector
 
         # Control output parameters
@@ -107,21 +108,26 @@ class Controller(threading.Thread):
             # FSM Logic / Switch between control states
             control_vector = (0.0, 0.0)
             if self.state == self.STATE_WAIT_TILL_STATIONARY:
+                self.control_method = "wait till stationary"
                 if object_state["motion_state"] == 1:  # stationary
                     self.delay_timer_start = time.time()
                     self.state = self.STATE_DELAY_BEFORE_PUMP
 
             elif self.state == self.STATE_DELAY_BEFORE_PUMP:
+                self.control_method = "before pump"
                 if time.time() - self.delay_timer_start > self.delay_duration:
                     self.state = self.STATE_PUMP
 
             elif self.state == self.STATE_PUMP:
                 # Pump control logic
                 if object_state["motion_state"] == 1:  # stationary
+                    self.control_method = "start_from_stationary"
                     control_vector = self.control_start_from_stationary(object_state)
                 elif object_state["motion_state"] == 2:  # oscillation
+                    self.control_method = "pump_oscillation"
                     control_vector = self.control_pump_oscillation(object_state)
                 elif object_state["motion_state"] == 3:  # full rotation
+                    self.control_method = "maintain_rotation"
                     control_vector = self.control_maintain_rotation(object_state)
                 else:
                     print(f"Unknown motion state: {object_state['motion_state']}")
@@ -132,8 +138,11 @@ class Controller(threading.Thread):
                         self.state = self.STATE_DECAY
                 else:
                     self.full_rotation_start_time = time.time()
+                
+                # print(control_vector)
 
             elif self.state == self.STATE_DECAY:
+                self.control_method = "decay"
                 # Optional: graceful decay logic
                 if object_state["motion_state"] == 1:  # back to stationary
                     self.state = self.STATE_WAIT_TILL_STATIONARY
@@ -172,19 +181,23 @@ class Controller(threading.Thread):
         # Normalize azimuth to [-180, 180] or [0, 360] if needed
         azimuth_deg = (azimuth_deg + 360) % 360
 
-        if getattr(self, "oscillation_init_direction_positive", None) is None:
+        if getattr(self, "oscillation_init_direction", None) is None:
             self.oscillation_init_direction = True
         if getattr(self, "oscillation_tilt", None) is None:
             self.oscillation_tilt = 0.0
 
         # Create a simple oscillation effect back and forth
+        starting_max_tilt = 1.1
+        starting_acceleration_rate = 1.2
+
         if self.oscillation_init_direction:
-            self.oscillation_tilt += self.acceleration_rate * self.delta_time
-            if self.oscillation_tilt >= self.max_tilt:
+            # self.oscillation_tilt += self.acceleration_rate * self.delta_time
+            self.oscillation_tilt += starting_acceleration_rate * self.delta_time
+            if self.oscillation_tilt >= starting_max_tilt:
                 self.oscillation_init_direction = False
-                self.oscillation_tilt = self.max_tilt
+                self.oscillation_tilt = starting_max_tilt
         else:
-            self.oscillation_tilt -= self.deceleration_rate * self.delta_time
+            self.oscillation_tilt -= starting_acceleration_rate * self.delta_time
             if self.oscillation_tilt <= 0.0:
                 self.oscillation_init_direction = True
                 self.oscillation_tilt = 0.0
