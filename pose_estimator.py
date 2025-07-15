@@ -83,7 +83,7 @@ class PoseEstimator(threading.Thread):
         self.arc_filtered_radius = self.expected_radius  # Initialize to expected radius
         self.arc_filtered_center_clamp = [-250, 250]
 
-        self.stationary_time_window = 2.0
+        self.stationary_time_window = 4.0
         self.stationary_velocity_threshold = 10.0
 
         self.freq_estimator = FrequencyEstimator(alpha=0.2)

@@ -9,9 +9,9 @@ import threading
 
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 
-SAFETY_CIRCLE_RADIUS_MM = 200
-SCALE = 2  # pixels per mm (800 px represents 200 mm)
-SCALE_DEGREES = 200  # pixels per degree (800 px represents +-2 degrees)
+SAFETY_CIRCLE_RADIUS_MM = 250
+SCALE = 1.6  # pixels per mm (800 px represents 200 mm)
+SCALE_DEGREES = 160  # pixels per degree (800 px represents +-2 degrees)
 
 
 class PoseVisualizer(threading.Thread):
@@ -29,7 +29,6 @@ class PoseVisualizer(threading.Thread):
         self.canvas_width = canvas_width
         self.freq_estimator = FrequencyEstimator(alpha=0.2)
 
-        self.SAFETY_CIRCLE_RADIUS_MM = 200
         self.SCALE = 2  # pixels per mm
         self.time_window = 10.0
 
@@ -47,28 +46,47 @@ class PoseVisualizer(threading.Thread):
         cv2.namedWindow("Pose Visualization")
 
         cv2.createTrackbar(
-            "Act Start",
+            "START - Tilt Acc x100",
+            "Pose Visualization",
+            (int)(self.controller.starting_acceleration_rate * 100),
+            200,
+            lambda x: setattr(self.controller, "starting_acceleration_rate", x / 100.0),
+        )
+        cv2.createTrackbar(
+            "START - Max Tilt x100",
+            "Pose Visualization",
+            (int)(self.controller.starting_max_tilt * 100),
+            200,
+            # Lambda function to handle max tilt
+            lambda x: setattr(self.controller, "starting_max_tilt", x / 100.0),
+        )  
+
+        cv2.createTrackbar(
+            "OSC - Act Start",
             "Pose Visualization",
             self.controller.phase_start,
             360,
             lambda x: setattr(self.controller, "phase_start", x),
         )
         cv2.createTrackbar(
-            "Act End",
+            "OSC - Act End",
             "Pose Visualization",
             self.controller.phase_end,
             360,
             lambda x: setattr(self.controller, "phase_end", x),
         )
         cv2.createTrackbar(
-            "Lead Angle",
+            "OSC - Lead Angle",
             "Pose Visualization",
             self.controller.lead_angle_deg,
             180,
             lambda x: setattr(self.controller, "lead_angle_deg", x),
         )
+        
+      
+
         cv2.createTrackbar(
-            "Tilt Acc x100",
+            "OSC - Tilt Acc x100",
             "Pose Visualization",
             (int)(self.controller.acceleration_rate * 100),
             100,
@@ -76,7 +94,7 @@ class PoseVisualizer(threading.Thread):
             self.on_slider_acc_change,
         )
         cv2.createTrackbar(
-            "Max Tilt x100",
+            "OSC - Max Tilt x100",
             "Pose Visualization",
             (int)(self.controller.max_tilt * 100),
             100,
@@ -84,7 +102,7 @@ class PoseVisualizer(threading.Thread):
             lambda x: setattr(self.controller, "max_tilt", x / 100.0),
         )
         cv2.createTrackbar(
-            "FullRotation Tilt x100",
+            "FULL - Tilt x100",
             "Pose Visualization",
             (int)(self.controller.full_rotation_tilt * 100),
             100,
@@ -95,7 +113,7 @@ class PoseVisualizer(threading.Thread):
             "Center Restoring Gain x10000",
             "Pose Visualization",
             int(self.controller.center_restoring_gain * 10000),
-            100,
+            200,
             # Lambda function to handle center restoring gain
             lambda x: setattr(self.controller, "center_restoring_gain", x / 10000.0),
         )
@@ -150,7 +168,7 @@ class PoseVisualizer(threading.Thread):
         # === Draw Controller State Info ===
         if self.controller is not None:
             state_name = {
-                self.controller.STATE_WAIT_TILL_STATIONARY: "WAIT_TILL_STATIONARY",
+                self.controller.STATE_WAIT_WHILE_STATIONARY: "STATE_WAIT_WHILE_STATIONARY",
                 self.controller.STATE_DELAY_BEFORE_PUMP: "DELAY_BEFORE_PUMP",
                 self.controller.STATE_PUMP: "PUMP",
                 self.controller.STATE_DECAY: "DECAY",

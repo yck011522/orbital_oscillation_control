@@ -20,24 +20,29 @@ class Controller(threading.Thread):
         self.stop_event = threading.Event()
 
         # FSM states
-        self.STATE_WAIT_TILL_STATIONARY = 0
+        self.STATE_WAIT_WHILE_STATIONARY = 0
         self.STATE_DELAY_BEFORE_PUMP = 1
         self.STATE_PUMP = 2
         self.STATE_DECAY = 3
 
-        self.state = self.STATE_WAIT_TILL_STATIONARY
+        self.state = self.STATE_WAIT_WHILE_STATIONARY
         self.control_method = ""
         self.debug_force_state = None  # set this to 2 (PUMP) to force debug mode
 
         # Timing and parameters
         self.delay_timer_start = None
         self.full_rotation_start_time = time.time()
+        self.wait_time_after_stationary = 10.0
+        self.stationary_begin_time = 0
         self.delay_duration = 2.0
         self.pump_duration = 10.0
 
         # Oscillation control mode parameters
         self.oscillation_tilt = 0.0
         self.oscillation_init_direction = True  # True for positive direction
+
+        self.starting_max_tilt = 1.1
+        self.starting_acceleration_rate = 1.2
 
         # Phase control parameters
         self.phase_start = 95
@@ -48,12 +53,11 @@ class Controller(threading.Thread):
         self.lead_angle_deg = 90  # lead angle for azimuth
 
         # Full rotation control mode parameters
-        self.full_rotation_tilt = 0.20  # degrees (constant tilt to maintain)
+        self.full_rotation_tilt = 0.10  # degrees (constant tilt to maintain)
         self.full_rotation_lead_angle = 90.0  # degrees ahead of current object angle
 
         # Center restoring vector parameters
-        self.center_restoring_gain = 0.0085  # Gain for restoring vector towards center
-        self.center_restoring_vector_max = 0.5  # Maximum length of restoring vector
+        self.center_restoring_gain = 0.0195  # Gain for restoring vector towards center
 
         # Control output parameters
         self.current_tilt_vector = (0.0, 0.0)  # Current tilt vector in XY coordinates
@@ -107,16 +111,16 @@ class Controller(threading.Thread):
 
             # FSM Logic / Switch between control states
             control_vector = (0.0, 0.0)
-            if self.state == self.STATE_WAIT_TILL_STATIONARY:
+            if self.state == self.STATE_WAIT_WHILE_STATIONARY:
                 self.control_method = "wait till stationary"
-                if object_state["motion_state"] == 1:  # stationary
+                if time.time() - self.stationary_begin_time > self.wait_time_after_stationary:
                     self.delay_timer_start = time.time()
-                    self.state = self.STATE_DELAY_BEFORE_PUMP
-
-            elif self.state == self.STATE_DELAY_BEFORE_PUMP:
-                self.control_method = "before pump"
-                if time.time() - self.delay_timer_start > self.delay_duration:
                     self.state = self.STATE_PUMP
+
+            # elif self.state == self.STATE_DELAY_BEFORE_PUMP:
+            #     self.control_method = "before pump"
+            #     if time.time() - self.delay_timer_start > self.delay_duration:
+            #         self.state = self.STATE_PUMP
 
             elif self.state == self.STATE_PUMP:
                 # Pump control logic
@@ -144,8 +148,9 @@ class Controller(threading.Thread):
             elif self.state == self.STATE_DECAY:
                 self.control_method = "decay"
                 # Optional: graceful decay logic
-                if object_state["motion_state"] == 1:  # back to stationary
-                    self.state = self.STATE_WAIT_TILL_STATIONARY
+                if object_state["motion_state"] == 1:  # object have decayed to a stop
+                    self.stationary_begin_time = time.time()
+                    self.state = self.STATE_WAIT_WHILE_STATIONARY
 
             # Compute center restoring vector
             center_restoring_vector = self.control_center_restoring_vector(object_state)
@@ -187,17 +192,15 @@ class Controller(threading.Thread):
             self.oscillation_tilt = 0.0
 
         # Create a simple oscillation effect back and forth
-        starting_max_tilt = 1.1
-        starting_acceleration_rate = 1.2
 
         if self.oscillation_init_direction:
             # self.oscillation_tilt += self.acceleration_rate * self.delta_time
-            self.oscillation_tilt += starting_acceleration_rate * self.delta_time
-            if self.oscillation_tilt >= starting_max_tilt:
+            self.oscillation_tilt += self.starting_acceleration_rate * self.delta_time
+            if self.oscillation_tilt >= self.starting_max_tilt:
                 self.oscillation_init_direction = False
-                self.oscillation_tilt = starting_max_tilt
+                self.oscillation_tilt = self.starting_max_tilt
         else:
-            self.oscillation_tilt -= starting_acceleration_rate * self.delta_time
+            self.oscillation_tilt -= self.starting_acceleration_rate * self.delta_time
             if self.oscillation_tilt <= 0.0:
                 self.oscillation_init_direction = True
                 self.oscillation_tilt = 0.0
