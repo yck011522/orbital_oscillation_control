@@ -84,7 +84,7 @@ class PoseEstimator(threading.Thread):
         self.arc_filtered_center_clamp = [-250, 250]
 
         self.stationary_time_window = 4.0
-        self.stationary_velocity_threshold = 10.0
+        self.stationary_velocity_threshold = 4.0
 
         self.freq_estimator = FrequencyEstimator(alpha=0.2)
 
@@ -321,11 +321,15 @@ class PoseEstimator(threading.Thread):
                 for s in self.history
                 if now - s["timestamp"] < self.stationary_time_window
             ]
-            if recent_window and all(
-                abs(s["velocity"]) < self.stationary_velocity_threshold
-                for s in recent_window
-            ):
-                return 1  # Stationary
+            # if recent_window and all(
+            #     abs(s["velocity"]) < self.stationary_velocity_threshold
+            #     for s in recent_window
+            # ):
+            if recent_window :
+                total = sum(abs(s["velocity"]) for s in recent_window)
+                average = total / len(recent_window)
+                if average < self.stationary_velocity_threshold:
+                    return 1  # Stationary
 
         # --- 2. Oscillation vs Full Rotation ---
         # Find index of last reversal

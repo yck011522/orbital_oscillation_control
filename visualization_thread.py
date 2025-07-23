@@ -60,6 +60,15 @@ class PoseVisualizer(threading.Thread):
             # Lambda function to handle max tilt
             lambda x: setattr(self.controller, "starting_max_tilt", x / 100.0),
         )  
+        cv2.createTrackbar(
+            "START - Pause Time x100",
+            "Pose Visualization",
+            (int)(self.controller.starting_pause_time * 100),
+            200,
+            # Lambda function to handle max tilt
+            lambda x: setattr(self.controller, "starting_pause_time", x / 100.0),
+        )  
+        
 
         cv2.createTrackbar(
             "OSC - Act Start",

@@ -32,7 +32,7 @@ class Controller(threading.Thread):
         # Timing and parameters
         self.delay_timer_start = None
         self.full_rotation_start_time = time.time()
-        self.wait_time_after_stationary = 10.0
+        self.wait_time_after_stationary = 40.0
         self.stationary_begin_time = 0
         self.delay_duration = 2.0
         self.pump_duration = 10.0
@@ -40,16 +40,18 @@ class Controller(threading.Thread):
         # Oscillation control mode parameters
         self.oscillation_tilt = 0.0
         self.oscillation_init_direction = True  # True for positive direction
+        self.oscillation_pause_start = time.time()
 
-        self.starting_max_tilt = 1.1
-        self.starting_acceleration_rate = 1.2
+        self.starting_acceleration_rate = 1.02
+        self.starting_max_tilt = 1.08
+        self.starting_pause_time = 0.53       
 
         # Phase control parameters
         self.phase_start = 95
         self.phase_end = 260
-        self.max_tilt = 0.65  # degrees
-        self.acceleration_rate = 0.20  # deg/sec²
-        self.deceleration_rate = 0.20  # deg/sec²
+        self.max_tilt = 0.80  # degrees
+        self.acceleration_rate = 0.63  # deg/sec²
+        self.deceleration_rate = 0.63  # deg/sec²
         self.lead_angle_deg = 90  # lead angle for azimuth
 
         # Full rotation control mode parameters
@@ -192,17 +194,21 @@ class Controller(threading.Thread):
             self.oscillation_tilt = 0.0
 
         # Create a simple oscillation effect back and forth
-
+        
         if self.oscillation_init_direction:
             # self.oscillation_tilt += self.acceleration_rate * self.delta_time
-            self.oscillation_tilt += self.starting_acceleration_rate * self.delta_time
+            if (time.time() - self.oscillation_pause_start) > self.starting_pause_time:
+                self.oscillation_tilt += self.starting_acceleration_rate * self.delta_time
             if self.oscillation_tilt >= self.starting_max_tilt:
                 self.oscillation_init_direction = False
+                self.oscillation_pause_start = time.time()
                 self.oscillation_tilt = self.starting_max_tilt
         else:
-            self.oscillation_tilt -= self.starting_acceleration_rate * self.delta_time
+            if (time.time() - self.oscillation_pause_start) > self.starting_pause_time:
+                self.oscillation_tilt -= self.starting_acceleration_rate * self.delta_time
             if self.oscillation_tilt <= 0.0:
                 self.oscillation_init_direction = True
+                self.oscillation_pause_start = time.time()
                 self.oscillation_tilt = 0.0
 
         return self.tilt_azimuth_to_vector(self.oscillation_tilt, azimuth_deg)
