@@ -39,7 +39,6 @@ class PoseVisualizer(threading.Thread):
         """Callback for track-bar changes."""
         if self.controller is not None:
             setattr(self.controller, "acceleration_rate", x / 100.0),
-            setattr(self.controller, "deceleration_rate", x / 100.0),
 
     def run(self):
 
@@ -94,22 +93,22 @@ class PoseVisualizer(threading.Thread):
         
       
 
-        cv2.createTrackbar(
-            "OSC - Tilt Acc x100",
-            "Pose Visualization",
-            (int)(self.controller.acceleration_rate * 100),
-            100,
-            # Set both acceleration_rate and deceleration_rate
-            self.on_slider_acc_change,
-        )
-        cv2.createTrackbar(
-            "OSC - Max Tilt x100",
-            "Pose Visualization",
-            (int)(self.controller.max_tilt * 100),
-            100,
-            # Lambda function to handle max tilt
-            lambda x: setattr(self.controller, "max_tilt", x / 100.0),
-        )
+        # cv2.createTrackbar(
+        #     "OSC - Tilt Acc x100",
+        #     "Pose Visualization",
+        #     (int)(self.controller.acceleration_rate * 100),
+        #     100,
+        #     # Set both acceleration_rate
+        #     self.on_slider_acc_change,
+        # )
+        # cv2.createTrackbar(
+        #     "OSC - Max Tilt x100",
+        #     "Pose Visualization",
+        #     (int)(self.controller.max_tilt * 100),
+        #     100,
+        #     # Lambda function to handle max tilt
+        #     lambda x: setattr(self.controller, "max_tilt", x / 100.0),
+        # )
         cv2.createTrackbar(
             "FULL - Tilt x100",
             "Pose Visualization",

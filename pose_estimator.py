@@ -644,11 +644,11 @@ class PoseEstimator(threading.Thread):
 
         
 
-        print(
-            f"[CircleFit] Center: ({self.arc_filtered_center_x:.2f}, {self.arc_filtered_center_y:.2f}), "
-            f"Radius: {self.arc_filtered_radius:.2f} mm, "
-            f"[ArcFit] Using {len(points)} points for circle fit."
-        )
+        # print(
+        #     f"[CircleFit] Center: ({self.arc_filtered_center_x:.2f}, {self.arc_filtered_center_y:.2f}), "
+        #     f"Radius: {self.arc_filtered_radius:.2f} mm, "
+        #     f"[ArcFit] Using {len(points)} points for circle fit."
+        # )
         return (
             self.arc_filtered_center_x,
             self.arc_filtered_center_y,

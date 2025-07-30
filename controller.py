@@ -7,6 +7,7 @@ from timing_utils import FrequencyEstimator
 from pose_estimator import PoseEstimator
 import math
 
+ABS_MAX_TILT = 0.9
 
 class Controller(threading.Thread):
     def __init__(
@@ -49,9 +50,14 @@ class Controller(threading.Thread):
         # Phase control parameters
         self.phase_start = 95
         self.phase_end = 260
-        self.max_tilt = 0.80  # degrees
-        self.acceleration_rate = 0.63  # deg/sec²
-        self.deceleration_rate = 0.63  # deg/sec²
+        self.pump_max_tilt_initial = 0.80  # degrees
+        self.pump_max_tilt_regular = 0.29  # degrees
+        self.pump_acceleration_rate_initial = 0.63  # deg/sec²
+        self.pump_acceleration_rate_regular = 0.27  # deg/sec²
+        self.pump_initial_rate_duration = 2.0 # seconds
+        self.pump_max_tilt = self.pump_max_tilt_initial
+        self.pump_acceleration_rate = self.pump_acceleration_rate_initial
+        self.pump_oscillation_start_time = time.time()
         self.lead_angle_deg = 90  # lead angle for azimuth
 
         # Full rotation control mode parameters
@@ -129,12 +135,18 @@ class Controller(threading.Thread):
                 if object_state["motion_state"] == 1:  # stationary
                     self.control_method = "start_from_stationary"
                     control_vector = self.control_start_from_stationary(object_state)
+                    self.pump_max_tilt = self.pump_max_tilt_initial
+                    self.pump_acceleration_rate = self.pump_acceleration_rate_initial
+                    self.pump_oscillation_start_time = time.time()
                 elif object_state["motion_state"] == 2:  # oscillation
                     self.control_method = "pump_oscillation"
                     control_vector = self.control_pump_oscillation(object_state)
                 elif object_state["motion_state"] == 3:  # full rotation
                     self.control_method = "maintain_rotation"
                     control_vector = self.control_maintain_rotation(object_state)
+                    self.pump_max_tilt = self.pump_max_tilt_initial
+                    self.pump_acceleration_rate = self.pump_acceleration_rate_initial
+                    self.pump_oscillation_start_time = time.time()
                 else:
                     print(f"Unknown motion state: {object_state['motion_state']}")
 
@@ -196,7 +208,6 @@ class Controller(threading.Thread):
         # Create a simple oscillation effect back and forth
         
         if self.oscillation_init_direction:
-            # self.oscillation_tilt += self.acceleration_rate * self.delta_time
             if (time.time() - self.oscillation_pause_start) > self.starting_pause_time:
                 self.oscillation_tilt += self.starting_acceleration_rate * self.delta_time
             if self.oscillation_tilt >= self.starting_max_tilt:
@@ -228,15 +239,27 @@ class Controller(threading.Thread):
         # === TILT CONTROL ===
         in_active_range = self.phase_start <= phase_deg <= self.phase_end
 
+        # Gradual increase acc_rate and max_tilt
+        if (time.time() - self.pump_oscillation_start_time) < self.pump_initial_rate_duration:
+            self.pump_acceleration_rate += (self.delta_time / self.pump_initial_rate_duration) * (self.pump_acceleration_rate_regular - self.pump_acceleration_rate_initial)
+            self.pump_max_tilt += (self.delta_time / self.pump_initial_rate_duration) * (self.pump_max_tilt_regular - self.pump_max_tilt_initial)
+        else:
+            self.pump_acceleration_rate  = self.pump_acceleration_rate_regular
+            self.pump_max_tilt = self.pump_max_tilt_regular
+
+        print("[pump_acceleration_rate]", self.pump_acceleration_rate, "[pump_max_tilt]", self.pump_max_tilt)
+
+
+
         if in_active_range:
             # Accelerate upward
             # print("Accelerate upward")
-            self.oscillation_tilt += self.acceleration_rate * self.delta_time
-            self.oscillation_tilt = min(self.oscillation_tilt, self.max_tilt)
+            self.oscillation_tilt += self.pump_acceleration_rate * self.delta_time
+            self.oscillation_tilt = min(self.oscillation_tilt, self.pump_max_tilt)
         else:
             # Decelerate downward
             # print("Decelerate downward")
-            self.oscillation_tilt -= self.deceleration_rate * self.delta_time
+            self.oscillation_tilt -= self.pump_acceleration_rate * self.delta_time
             self.oscillation_tilt = max(self.oscillation_tilt, 0.0)
 
         # === AZIMUTH CONTROL ===
@@ -305,7 +328,7 @@ class Controller(threading.Thread):
         dt = now - self.last_motor_time
         self.last_motor_time = now
         # Clamp target values to within tilt vector limits for SAFETY
-        target_tilt = max(-self.max_tilt, min(self.max_tilt, target_tilt))
+        target_tilt = max(-ABS_MAX_TILT, min(ABS_MAX_TILT, target_tilt))
 
         # Convert to radians
         tilt_rad = math.radians(target_tilt)
