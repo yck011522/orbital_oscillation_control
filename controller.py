@@ -169,14 +169,14 @@ class Controller(threading.Thread):
                     self.stationary_begin_time = time.time()
                     self.state = self.STATE_WAIT_WHILE_STATIONARY
 
-            # Limit change of control vector
-            delta_control_vector = (control_vector[0] - previous_control_vector[0], control_vector[1] - previous_control_vector[1])
-            delta_control_vector_length = math.sqrt(delta_control_vector[0]**2 + delta_control_vector[1]**2)
-            # print(f"delta_control_vector_length = {delta_control_vector_length}")
-            if delta_control_vector_length > self.max_control_vector_acc * self.delta_time:
-                fraction = self.max_control_vector_acc * self.delta_time / delta_control_vector_length
-                control_vector = (control_vector[0] * fraction, control_vector[1] *fraction)
-                print (f"Conrol Vector Capped at {fraction:.2f} pct")
+            # # Limit change of control vector
+            # delta_control_vector = (control_vector[0] - previous_control_vector[0], control_vector[1] - previous_control_vector[1])
+            # delta_control_vector_length = math.sqrt(delta_control_vector[0]**2 + delta_control_vector[1]**2)
+            # # print(f"delta_control_vector_length = {delta_control_vector_length}")
+            # if delta_control_vector_length > self.max_control_vector_acc * self.delta_time:
+            #     fraction = self.max_control_vector_acc * self.delta_time / delta_control_vector_length
+            #     control_vector = (previous_control_vector[0] + delta_control_vector[0] * fraction, previous_control_vector[1] + delta_control_vector[1] *fraction)
+            #     print (f"Conrol Vector Capped at {fraction:.2f} pct")
 
             previous_control_vector =  control_vector
 
