@@ -50,10 +50,10 @@ class Controller(threading.Thread):
         # Phase control parameters
         self.phase_start = 95
         self.phase_end = 260
-        self.pump_max_tilt_initial = 0.80  # degrees
-        self.pump_max_tilt_regular = 0.29  # degrees
-        self.pump_acceleration_rate_initial = 0.63  # deg/sec²
-        self.pump_acceleration_rate_regular = 0.27  # deg/sec²
+        self.pump_max_tilt_initial = 0.70  # degrees
+        self.pump_max_tilt_regular = 0.24  # degrees
+        self.pump_acceleration_rate_initial = 0.53  # deg/sec²
+        self.pump_acceleration_rate_regular = 0.22  # deg/sec²
         self.pump_initial_rate_duration = 2.0 # seconds
         self.pump_max_tilt = self.pump_max_tilt_initial
         self.pump_acceleration_rate = self.pump_acceleration_rate_initial
