@@ -22,8 +22,8 @@ if __name__ == "__main__":
     controller.start()
 
     # Start Visualization Thread
-    # visualizer = PoseVisualizer(pose_estimator, controller)
-    # visualizer.start()
+    visualizer = PoseVisualizer(pose_estimator, controller)
+    visualizer.start()
 
     # Wait until everything is done
     # controller.join()
