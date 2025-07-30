@@ -24,9 +24,9 @@ from actuator_utils import (
 
 # Serial connection for motor control
 ser = open_serial()
-if not home_all_motors(ser, settle_position_mm=28.1, skip_if_homed=True):
+if not home_all_motors(ser, settle_position_mm=28.1, skip_if_homed=False):
     print("Homing failed. Exiting.")
     exit()
 
 # Validate travel
-validate_full_travel(ser)
+validate_full_travel(ser, 0.9)
