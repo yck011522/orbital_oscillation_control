@@ -297,7 +297,8 @@ class Controller(threading.Thread):
         """
 
         obj_angle_deg = state["angle"]
-        direction_is_forward = self.pose_estimator.get_direction()  # True for CW
+        direction_is_forward = state["direction_positive"]
+          # True for CW
 
         # === TILT ===
         tilt_deg = (

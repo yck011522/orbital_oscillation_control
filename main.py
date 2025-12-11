@@ -31,9 +31,10 @@ if __name__ == "__main__":
 
     while True:
         # print(f"Pose Frequency: {pose_estimator.freq_estimator.smoothed_freq :.2f} Hz, Controller Frequency: {controller.freq_estimator.smoothed_freq :.2f} Hz")
-        # print(f"Pose Estimator State: {pose_estimator.get_phase()}")
+        state = pose_estimator.state
         time.sleep(0.2)
-        print(f"speed : {pose_estimator.state.get('velocity',None)}")
+        print(f"speed : {state.get('velocity',None)}, phase: {state.get('phase',None)}")
+        # print(f"speed : {pose_estimator.state.get('velocity',None)}")
         # print(
         #     f"Visualization Thread Frequency: {visualizer.freq_estimator.smoothed_freq:.2f} Hz, "
         #     f"Controller Frequency: {controller.freq_estimator.smoothed_freq:.2f} Hz, "
