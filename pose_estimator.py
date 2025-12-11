@@ -400,6 +400,53 @@ class PoseEstimator(threading.Thread):
         return self.filtered_acceleration
 
     # ─────────────────────────────────────────────────────────────────────────────
+    # PHASE & DIRECTION QUERIES
+    # ─────────────────────────────────────────────────────────────────────────────
+
+    def estimate_phase(self):
+        """
+        Get current phase within the oscillation cycle.
+        
+        Computes phase as the normalized time since the last velocity reversal,
+        scaled to [0°, 360°) where 0–180° represents motion in one direction and
+        180–360° represents motion in the opposite direction.
+        
+        Returns:
+            float: Phase angle in degrees [0, 360). Zero if less than two reversals recorded.
+        """
+        if len(self.reversal_times) < 2:
+            return 0.0
+
+        now = time.time()
+        t_prev, _ = self.reversal_times[-2]
+        t_curr, _ = self.reversal_times[-1]
+
+        half_period = t_curr - t_prev
+        if half_period < 1e-6:
+            return 0.0
+
+        t_since_last = now - t_curr
+        normalized_phase = min(
+            1.0, max(0.0, t_since_last / half_period)
+        )  # clamp to [0,1]
+
+        # Use velocity sign to infer direction
+        latest_velocity = self.state.get("velocity", 0.0)
+        if latest_velocity >= 0:
+            return normalized_phase * 180.0  # CW half
+        else:
+            return 180.0 + normalized_phase * 180.0  # CCW half
+
+    def estimate_direction(self):
+        """
+        Get current direction of motion.
+        
+        Returns:
+            bool: True if moving in positive angular direction (CCW), False if negative (CW).
+        """
+        return self.state.get("velocity", 0.0) > 0
+
+    # ─────────────────────────────────────────────────────────────────────────────
     # MOTION STATE DETECTION
     # ─────────────────────────────────────────────────────────────────────────────
 
@@ -656,8 +703,6 @@ class PoseEstimator(threading.Thread):
         if self.arc_filtered_center_y > self.arc_filtered_center_clamp[1]:
             self.arc_filtered_center_y = self.arc_filtered_center_clamp[1]
 
-        
-
         # print(
         #     f"[CircleFit] Center: ({self.arc_filtered_center_x:.2f}, {self.arc_filtered_center_y:.2f}), "
         #     f"Radius: {self.arc_filtered_radius:.2f} mm, "
@@ -668,53 +713,6 @@ class PoseEstimator(threading.Thread):
             self.arc_filtered_center_y,
             self.arc_filtered_radius,
         )
-
-    # ─────────────────────────────────────────────────────────────────────────────
-    # PHASE & DIRECTION QUERIES
-    # ─────────────────────────────────────────────────────────────────────────────
-
-    def estimate_phase(self):
-        """
-        Get current phase within the oscillation cycle.
-        
-        Computes phase as the normalized time since the last velocity reversal,
-        scaled to [0°, 360°) where 0–180° represents motion in one direction and
-        180–360° represents motion in the opposite direction.
-        
-        Returns:
-            float: Phase angle in degrees [0, 360). Zero if less than two reversals recorded.
-        """
-        if len(self.reversal_times) < 2:
-            return 0.0
-
-        now = time.time()
-        t_prev, _ = self.reversal_times[-2]
-        t_curr, _ = self.reversal_times[-1]
-
-        half_period = t_curr - t_prev
-        if half_period < 1e-6:
-            return 0.0
-
-        t_since_last = now - t_curr
-        normalized_phase = min(
-            1.0, max(0.0, t_since_last / half_period)
-        )  # clamp to [0,1]
-
-        # Use velocity sign to infer direction
-        latest_velocity = self.state.get("velocity", 0.0)
-        if latest_velocity >= 0:
-            return normalized_phase * 180.0  # CW half
-        else:
-            return 180.0 + normalized_phase * 180.0  # CCW half
-
-    def estimate_direction(self):
-        """
-        Get current direction of motion.
-        
-        Returns:
-            bool: True if moving in positive angular direction (CCW), False if negative (CW).
-        """
-        return self.state.get("velocity", 0.0) > 0
 
     # ─────────────────────────────────────────────────────────────────────────────
     # UTILITY HELPERS
