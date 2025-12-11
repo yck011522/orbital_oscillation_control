@@ -35,60 +35,19 @@ import numpy as np
 class PoseEstimator(threading.Thread):
     def __init__(self, source, history_size=1000):
         super().__init__(daemon=True, name="PoseEstimator")
-        self.history = deque(maxlen=history_size)
-        self.reversal_angles = deque(maxlen=10)
-        self.last_velocity = 0.0
-        self.last_reversal = None
-        self.last_reversal_time = None
-
-        # Filters
-        self.filtered_cop_x = None
-        self.filtered_cop_y = None
-        self.last_update_time = None
-        self.position_filter_tau = 0.2  # seconds
-
-        self.filtered_velocity = 0.0
-        self.velocity_filter_tau = 0.2  # Larger value for more smoothing
-        self.velocity_filter_last_time = None
-
-        self.filtered_acceleration = 0.0
-        self.acceleration_filter_tau = 0.5  # Larger value for more smoothing
-        self.acceleration_filter_last_time = None
-
+        
+        # ─────────────────────────────────────────────────────────────────────────────
+        # THREADING & STATE MANAGEMENT
+        # ─────────────────────────────────────────────────────────────────────────────
         self.state = {}
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
         self.ready_flag = threading.Event()
         self.finished_flag = threading.Event()
 
-        # Reversal tracking parameters
-        self.reversal_times = deque(maxlen=20)
-        self.DEADBAND_THRESHOLD = 0.0
-
-        # Circle fitting parameters
-        self.arc_length_min = 150  # look back for this many mm
-        self.arc_history_min_points = 5  # minimum number of points to fit an arc
-        self.arc_history_time_sec_max = (
-            3.0  # look further back this many seconds if distance is not enough
-        )
-        self.arc_portion_deg_min = 5.0  # minimum angle portion to consider a valid arc
-        self.arc_filter_tau = (
-            3.0  # Larger value for more smoothing # 4 seconds seems reasonable
-        )
-        self.arc_filter_last_time = None
-        self.expected_radius = 115.0  # Expected radius in mm for the arc
-        self.expected_radius_clamp = [60,180]
-        self.arc_filtered_center_x = 0  # None # Initialize to 0 for warm start
-        self.arc_filtered_center_y = 0  # None # Initialize to 0 for warm start
-        self.arc_filtered_radius = self.expected_radius  # Initialize to expected radius
-        self.arc_filtered_center_clamp = [-250, 250]
-
-        self.stationary_time_window = 4.0
-        self.stationary_velocity_threshold = 4.0
-
-        self.freq_estimator = FrequencyEstimator(alpha=0.2)
-
-        # Handle source
+        # ─────────────────────────────────────────────────────────────────────────────
+        # DATA SOURCE HANDLING
+        # ─────────────────────────────────────────────────────────────────────────────
         if isinstance(source, str):
             self.mode = "csv"
             self.df = pd.read_csv(source)
@@ -97,17 +56,134 @@ class PoseEstimator(threading.Thread):
             self.mode = "stream"
             self.data_stream = source
 
+        # ─────────────────────────────────────────────────────────────────────────────
+        # HISTORY & TRACKING
+        # ─────────────────────────────────────────────────────────────────────────────
+        self.history = deque(maxlen=history_size)
+        self.reversal_times = deque(maxlen=20)
+        self.reversal_angles = deque(maxlen=10)
+        
+        # ─────────────────────────────────────────────────────────────────────────────
+        # VELOCITY REVERSAL TRACKING
+        # ─────────────────────────────────────────────────────────────────────────────
+        self.last_reversal_time = None
+        self.last_reversal_angle = None
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        # POSITION FILTER (CoP smoothing)
+        # ─────────────────────────────────────────────────────────────────────────────
+        self.filtered_cop_x = None
+        self.filtered_cop_y = None
+        self.last_update_time = None
+        self.position_filter_tau = 0.2  # seconds, exponential filter time constant
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        # VELOCITY FILTER (angle velocity smoothing)
+        # ─────────────────────────────────────────────────────────────────────────────
+        self.filtered_velocity = 0.0
+        self.velocity_filter_tau = 0.2  # seconds, exponential filter time constant
+        self.velocity_filter_last_time = None
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        # ACCELERATION FILTER (angle acceleration smoothing)
+        # ─────────────────────────────────────────────────────────────────────────────
+        self.filtered_acceleration = 0.0
+        self.acceleration_filter_tau = 0.5  # seconds, exponential filter time constant
+        self.acceleration_filter_last_time = None
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        # MOTION STATE DETECTION PARAMETERS
+        # ─────────────────────────────────────────────────────────────────────────────
+        self.stationary_time_window = 4.0  # seconds, time window for averaging velocity
+        self.stationary_velocity_threshold = 4.0  # deg/s, average velocity threshold for stationary detection
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        # ARC FITTING & CIRCLE FITTING PARAMETERS
+        # ─────────────────────────────────────────────────────────────────────────────
+        # Arc collection parameters
+        self.arc_length_min = 150  # mm, minimum arc length to collect before fitting
+        self.arc_history_min_points = 5  # minimum number of points for arc fitting
+        self.arc_history_time_sec_max = 3.0  # seconds, maximum lookback time for arc points
+        self.arc_portion_deg_min = 5.0  # degrees, minimum arc portion to consider valid (currently unused)
+        
+        # Arc center & radius estimation (gradient descent + smoothing)
+        self.expected_radius = 115.0  # mm, nominal expected radius of motion arc
+        self.expected_radius_clamp = [60, 180]  # mm, valid range for arc radius
+        self.arc_filtered_center_x = 0  # mm, smoothed x-coordinate of arc center (warm start at 0)
+        self.arc_filtered_center_y = 0  # mm, smoothed y-coordinate of arc center (warm start at 0)
+        self.arc_filtered_radius = self.expected_radius  # mm, smoothed arc radius (warm start at expected)
+        self.arc_filtered_center_clamp = [-250, 250]  # mm, valid range for arc center coordinates
+        
+        # Arc smoothing & optimization
+        self.arc_filter_tau = 3.0  # seconds, exponential smoothing filter time constant for arc results
+        self.arc_filter_last_time = None  # timestamp of last arc filter update
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        # MONITORING & DIAGNOSTICS
+        # ─────────────────────────────────────────────────────────────────────────────
+        self.freq_estimator = FrequencyEstimator(alpha=0.2)
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # PUBLIC API: Thread Control & State Access
+    # ─────────────────────────────────────────────────────────────────────────────
+
     def stop(self):
+        """Signal the pose estimator thread to stop gracefully."""
         self.stop_event.set()
 
     def is_ready(self):
-        return self.ready_flag.is_set()  # <--- NEW
+        """
+        Check if the pose estimator has processed at least one frame and is ready.
+        
+        Returns:
+            bool: True if at least one data row has been processed.
+        """
+        return self.ready_flag.is_set()
+
+    def is_finished(self):
+        """
+        Check if the pose estimator has finished processing all data (CSV mode only).
+        
+        Returns:
+            bool: True if CSV mode and all rows have been processed.
+        """
+        return self.finished_flag.is_set()
 
     def get_latest_state(self):
+        """
+        Retrieve the latest pose state snapshot safely.
+        
+        Thread-safe read of current state. Returns a copy to prevent external mutation.
+        
+        Returns:
+            dict: Latest state containing:
+                - timestamp: Wall clock time of estimate
+                - angle: Center of pressure angle in degrees [0, 360)
+                - velocity: Angular velocity in deg/s
+                - acceleration: Angular acceleration in deg/s²
+                - motion_state: 1=Stationary, 2=Oscillating, 3=Rotating
+                - phase: Phase angle in degrees [0, 360)
+                - direction_positive: True if moving CCW, False if CW
+                - last_reversal_angle: Angle at last velocity reversal
+                - arc_center_x, arc_center_y: Fitted arc center in mm
+                - arc_radius: Fitted arc radius in mm
+                - And other CoP and weight data
+        """
         with self.lock:
             return self.state.copy()
 
+    # ─────────────────────────────────────────────────────────────────────────────
+    # MAIN EXECUTION LOOP
+    # ─────────────────────────────────────────────────────────────────────────────
+
     def run(self):
+        """
+        Main execution loop for the pose estimator thread.
+        
+        Handles both CSV playback and live streaming modes. Continuously processes
+        sensor data and updates the shared state dictionary. Respects the stop_event
+        for graceful shutdown.
+        """
         if self.mode == "csv":
             self.start_time = self.df["Time (s)"].iloc[0]
             self.start_wall_time = time.time()
@@ -138,33 +214,43 @@ class PoseEstimator(threading.Thread):
                     break
                 self._process_row(row)
 
-    def _process_row(self, row):
-        now = time.time()
+    # ─────────────────────────────────────────────────────────────────────────────
+    # DATA PROCESSING
+    # ─────────────────────────────────────────────────────────────────────────────
 
-        angle = self._estimate_angle(row["cop_x"], row["cop_y"])
+    def _process_row(self, row):
+        """
+        Process a single row of sensor data and update all estimates.
+        
+        Updates angle, velocity, acceleration, arc fitting, motion state, and
+        updates the shared state dictionary. Called once per sensor frame.
+        
+        Args:
+            row (dict): Sensor data row with keys: cop_x, cop_y, total_weight
+        """
+        now = time.time()
+        cop_x = row["cop_x"]
+        cop_y = row["cop_y"]
+        total_weight = row["total_weight"]  
+
+        angle = self._estimate_angle(cop_x, cop_y)
         velocity = self._estimate_velocity()
         acceleration = self._estimate_acceleration()
         c_x, c_y, c_r = self.estimate_arc_center()
         self._check_velocity_reversal()
 
-        if self.last_velocity * velocity < 0:
-            self.last_reversal = angle
-            self.reversal_angles.append(angle)
-
-        self.last_velocity = velocity
-
-        phase = self.get_phase()
-        direction = self.get_direction()
+        phase = self.estimate_phase()
+        direction = self.estimate_direction()
         motion_state = self._classify_motion_state()
         state_now = {
             "timestamp": now,
             "angle": angle,
             "velocity": velocity,
             "acceleration": acceleration,
-            "last_reversal_angle": self.last_reversal,
-            "total_weight": row["total_weight"],
-            "cop_x": row["cop_x"],
-            "cop_y": row["cop_y"],
+            "last_reversal_angle": self.last_reversal_angle,
+            "total_weight": total_weight,
+            "cop_x": cop_x,
+            "cop_y": cop_y,
             "phase": phase,
             "direction_positive": direction,
             "motion_state": motion_state,
@@ -183,12 +269,25 @@ class PoseEstimator(threading.Thread):
 
         self.ready_flag.set()
 
-    def wrapped_angle_diff(self, a1, a0):
-        """Compute smallest angular difference (in degrees) considering wraparound at ±180°."""
-        diff = (a1 - a0 + 180) % 360 - 180
-        return diff
+    # ─────────────────────────────────────────────────────────────────────────────
+    # ANGLE, VELOCITY & ACCELERATION ESTIMATION
+    # ─────────────────────────────────────────────────────────────────────────────
 
     def _estimate_angle(self, raw_cop_x, raw_cop_y):
+        """
+        Estimate the object's angle from center of pressure (CoP) with low-pass filtering.
+        
+        Applies exponential smoothing to raw CoP coordinates to reduce sensor noise, then
+        computes angle using atan2. Follows standard polar coordinate convention:
+        0° = +X (East), 90° = +Y (North), 180° = -X (West), 270° = -Y (South).
+        
+        Args:
+            raw_cop_x (float): Raw CoP x-coordinate in meters.
+            raw_cop_y (float): Raw CoP y-coordinate in meters.
+        
+        Returns:
+            float: Filtered angle in degrees, range [0, 360).
+        """
         now = time.time()
 
         if self.filtered_cop_x is None:
@@ -210,6 +309,18 @@ class PoseEstimator(threading.Thread):
         return math.degrees(angle_rad)
 
     def _estimate_velocity(self, window=5):
+        """
+        Estimate angular velocity from angle history with low-pass filtering.
+        
+        Computes finite-difference velocity over a sliding window of history, then applies
+        exponential smoothing to reduce jitter. Properly handles angle wraparound at ±180°.
+        
+        Args:
+            window (int): Number of history samples to use for velocity estimation.
+        
+        Returns:
+            float: Filtered angular velocity in deg/s.
+        """
         if len(self.history) < window:
             return 0.0
 
@@ -237,6 +348,18 @@ class PoseEstimator(threading.Thread):
         return self.filtered_velocity
 
     def _estimate_acceleration(self, window=5):
+        """
+        Estimate angular acceleration from velocity history with low-pass filtering.
+        
+        Computes finite-difference acceleration over shifted windows of velocity history,
+        then applies exponential smoothing. Properly handles angle wraparound.
+        
+        Args:
+            window (int): Number of history samples to use for acceleration estimation.
+        
+        Returns:
+            float: Filtered angular acceleration in deg/s².
+        """
         if len(self.history) < window + 2:
             return 0.0
 
@@ -270,13 +393,70 @@ class PoseEstimator(threading.Thread):
         self.filtered_acceleration = (
             alpha * raw_acceleration + (1 - alpha) * self.filtered_acceleration
         )
-
         return self.filtered_acceleration
 
-    def is_finished(self):
-        return self.finished_flag.is_set()
+    # ─────────────────────────────────────────────────────────────────────────────
+    # PHASE & DIRECTION QUERIES
+    # ─────────────────────────────────────────────────────────────────────────────
+
+    def estimate_phase(self):
+        """
+        Get current phase within the oscillation cycle.
+        
+        Computes phase as the normalized time since the last velocity reversal,
+        scaled to [0°, 360°) where 0–180° represents motion in one direction and
+        180–360° represents motion in the opposite direction.
+        
+        Returns:
+            float: Phase angle in degrees [0, 360). Zero if less than two reversals recorded.
+        """
+        if len(self.reversal_times) < 2:
+            return 0.0
+
+        now = time.time()
+        t_prev, _ = self.reversal_times[-2]
+        t_curr, _ = self.reversal_times[-1]
+
+        half_period = t_curr - t_prev
+        if half_period < 1e-6:
+            return 0.0
+
+        t_since_last = now - t_curr
+        normalized_phase = min(
+            1.0, max(0.0, t_since_last / half_period)
+        )  # clamp to [0,1]
+
+        # Use velocity sign to infer direction
+        latest_velocity = self.state.get("velocity", 0.0)
+        if latest_velocity >= 0:
+            return normalized_phase * 180.0  # CW half
+        else:
+            return 180.0 + normalized_phase * 180.0  # CCW half
+
+    def estimate_direction(self):
+        """
+        Get current direction of motion.
+        
+        Returns:
+            bool: True if moving in positive angular direction (CCW), False if negative (CW).
+        """
+        return self.state.get("velocity", 0.0) > 0
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # MOTION STATE DETECTION
+    # ─────────────────────────────────────────────────────────────────────────────
 
     def _check_velocity_reversal(self):
+        """
+        Detect velocity reversals and record reversal times and angles.
+        
+        Monitors history for sign changes in velocity, interpolates the exact
+        reversal time, and stores both. Includes debouncing to avoid spurious
+        detections from noisy velocity estimates.
+        
+        Reversal times are useful for phase calculation and distinguishing
+        between oscillation and full rotation.
+        """
         if len(self.history) < 2:
             return
 
@@ -309,9 +489,19 @@ class PoseEstimator(threading.Thread):
             self.reversal_times.append((t_reversal, angle_reversal))
             self.last_reversal_time = t_reversal
             self.last_reversal_angle = angle_reversal
-            v_prev = s_prev.get("velocity", 0.0)
 
     def _classify_motion_state(self):
+        """
+        Classify current motion state based on velocity history and reversal tracking.
+        
+        Returns motion state enum:
+            1 (STATIONARY): Average velocity below threshold in recent time window
+            2 (OSCILLATING): Object moving but has not completed 360° rotation since last reversal
+            3 (ROTATING): Object has accumulated 360° rotation since last reversal
+        
+        Returns:
+            int: Motion state (1=Stationary, 2=Oscillating, 3=Rotating)
+        """
         now = time.time()
 
         # --- 1. Stationary/Vibration ---
@@ -321,11 +511,7 @@ class PoseEstimator(threading.Thread):
                 for s in self.history
                 if now - s["timestamp"] < self.stationary_time_window
             ]
-            # if recent_window and all(
-            #     abs(s["velocity"]) < self.stationary_velocity_threshold
-            #     for s in recent_window
-            # ):
-            if recent_window :
+            if recent_window:
                 total = sum(abs(s["velocity"]) for s in recent_window)
                 average = total / len(recent_window)
                 if average < self.stationary_velocity_threshold:
@@ -338,7 +524,6 @@ class PoseEstimator(threading.Thread):
 
         accumulated_angle = 0.0
         prev_angle = None
-        found = False
 
         # Go backwards through history until last reversal
         for s in reversed(self.history):
@@ -358,153 +543,25 @@ class PoseEstimator(threading.Thread):
 
         return 2  # Oscillation
 
-    def get_phase(self):
-        """
-        Returns:
-            phase (float): phase angle in degrees from 0 to 360.
-                0–180: CW direction
-                180–360: CCW direction
-        """
-        if len(self.reversal_times) < 2:
-            return 0.0
-
-        now = time.time()
-        t_prev, _ = self.reversal_times[-2]
-        t_curr, _ = self.reversal_times[-1]
-
-        half_period = t_curr - t_prev
-        if half_period < 1e-6:
-            return 0.0
-
-        t_since_last = now - t_curr
-        normalized_phase = min(
-            1.0, max(0.0, t_since_last / half_period)
-        )  # clamp to [0,1]
-
-        # Use velocity sign to infer direction
-        latest_velocity = self.state.get("velocity", 0.0)
-        if latest_velocity >= 0:
-            return normalized_phase * 180.0  # CW half
-        else:
-            return 180.0 + normalized_phase * 180.0  # CCW half
-
-    def get_direction(self):
-        """
-        Returns:
-            True if moving in positive direction, False if negative.
-        """
-        return self.state.get("velocity", 0.0) > 0
-
-    def _fit_circle_numpy(self, points):
-        """
-        Fit circle using linear least squares.
-        Returns: (center_x, center_y, radius)
-        """
-        x = np.array([p[0] for p in points])
-        y = np.array([p[1] for p in points])
-        A = np.c_[2 * x, 2 * y, np.ones(len(points))]
-        b = x**2 + y**2
-
-        try:
-            sol, _, _, _ = np.linalg.lstsq(A, b, rcond=None)
-            cx, cy = sol[0], sol[1]
-            r = np.sqrt(sol[2] + cx**2 + cy**2)
-            return cx, cy, r
-        except np.linalg.LinAlgError:
-            return None, None, None
-
-    # def estimate_arc_center(self):
-    #     now = time.time()
-    #     points = []
-    #     total_arc_length = 0.0
-    #     last_point = None
-
-    #     for state in reversed(self.history):
-    #         age = now - state["timestamp"]
-    #         if age > self.arc_history_time_sec_max:
-    #             break
-
-    #         x = state.get("cop_x")
-    #         y = state.get("cop_y")
-    #         if x is None or y is None:
-    #             continue
-
-    #         current_point = (x, y)
-    #         if last_point:
-    #             dist = math.hypot(x - last_point[0], y - last_point[1])
-    #             total_arc_length += dist
-
-    #         points.append(current_point)
-    #         last_point = current_point
-
-    #         if (
-    #             total_arc_length >= self.arc_length_min
-    #             and len(points) >= self.arc_history_min_points
-    #         ):
-    #             break  # Stop once we accumulate enough arc length
-
-    #     # if len(points) < 10:
-    #     #     return  # Too few points
-    #     if total_arc_length < self.arc_length_min:
-    #         return
-
-    #     points = list(reversed(points))  # chronological order
-
-    #     # === Fit circle ===
-    #     cx, cy, r = self._fit_circle_numpy(points)
-    #     if cx is None or cy is None or r is None or r == 0:
-    #         return
-
-    #     # === Validate angle portion ===
-    #     # angles = [math.atan2(p[1] - cy, p[0] - cx) for p in points]
-    #     # min_angle = min(angles)
-    #     # max_angle = max(angles)
-    #     # arc_angle_deg = math.degrees(
-    #     #     (max_angle - min_angle + math.pi * 2) % (math.pi * 2)
-    #     # )
-
-    #     # if arc_angle_deg < self.arc_portion_deg_min:
-    #     #     return  # arc too short to be reliable
-
-    #     # === Exponential smoothing ===
-    #     if self.arc_filter_last_time is None:
-    #         alpha = 1.0
-    #     else:
-    #         dt = now - self.arc_filter_last_time
-    #         alpha = 1 - math.exp(-dt / self.arc_filter_tau)
-
-    #     self.arc_filter_last_time = now
-
-    #     def smooth(old, new):
-    #         return alpha * new + (1 - alpha) * old if old is not None else new
-
-    #     self.arc_filtered_center_x = smooth(self.arc_filtered_center_x, cx)
-    #     self.arc_filtered_center_y = smooth(self.arc_filtered_center_y, cy)
-    #     self.arc_filtered_radius = smooth(self.arc_filtered_radius, r)
-    #     print(
-    #         f"Arc Center: ({self.arc_filtered_center_x:.2f}, {self.arc_filtered_center_y:.2f}), Radius: {self.arc_filtered_radius:.2f} m"
-    #     )
-
-    def subsample_points(self, points, max_points=25):
-        """
-        Sub-samples a list of (x, y) points to ensure the length does not exceed max_points.
-        Returns a new list of evenly spaced points.
-        """
-        n = len(points)
-        if n <= max_points:
-            return points  # no subsampling needed
-
-        step = n / max_points
-        indices = [int(i * step) for i in range(max_points)]
-        return [points[i] for i in indices]
+    # ─────────────────────────────────────────────────────────────────────────────
+    # ARC FITTING (Circle Fitting to Motion Trajectory)
+    # ─────────────────────────────────────────────────────────────────────────────
 
     def estimate_arc_center(self):
         """
-        Fit a circle to the current motion arc assuming a soft constraint on radius.
+        Fit a circle to the current motion arc using gradient descent.
+        
+        Collects points from motion history, fits a circle using non-linear optimization,
+        and applies exponential smoothing with soft radius constraints. The fitted arc
+        represents the trajectory that the object follows on the balance table.
+        
         Updates:
-            - self.arc_filtered_center_x
-            - self.arc_filtered_center_y
-            - self.arc_filtered_radius
+            - self.arc_filtered_center_x: Smoothed x-coordinate of arc center (mm)
+            - self.arc_filtered_center_y: Smoothed y-coordinate of arc center (mm)
+            - self.arc_filtered_radius: Smoothed arc radius (mm)
+        
+        Returns:
+            tuple: (center_x, center_y, radius) current smoothed arc parameters
         """
         now = time.time()
 
@@ -642,8 +699,6 @@ class PoseEstimator(threading.Thread):
         if self.arc_filtered_center_y > self.arc_filtered_center_clamp[1]:
             self.arc_filtered_center_y = self.arc_filtered_center_clamp[1]
 
-        
-
         # print(
         #     f"[CircleFit] Center: ({self.arc_filtered_center_x:.2f}, {self.arc_filtered_center_y:.2f}), "
         #     f"Radius: {self.arc_filtered_radius:.2f} mm, "
@@ -654,3 +709,72 @@ class PoseEstimator(threading.Thread):
             self.arc_filtered_center_y,
             self.arc_filtered_radius,
         )
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # UTILITY HELPERS
+    # ─────────────────────────────────────────────────────────────────────────────
+
+    def wrapped_angle_diff(self, a1, a0):
+        """
+        Compute smallest angular difference considering wraparound at ±180°.
+        
+        Handles the circular nature of angles to ensure we take the shortest path
+        between two angles rather than wrapping around the long way.
+        
+        Args:
+            a1 (float): Current angle in degrees.
+            a0 (float): Previous angle in degrees.
+        
+        Returns:
+            float: Signed angular difference in degrees, range (-180, 180].
+        """
+        diff = (a1 - a0 + 180) % 360 - 180
+        return diff
+
+    def subsample_points(self, points, max_points=25):
+        """
+        Subsample a list of (x, y) points to a maximum count.
+        
+        Evenly distributes subsampling across the entire sequence to preserve
+        the overall shape of the trajectory.
+        
+        Args:
+            points (list): List of (x, y) tuples representing CoP positions.
+            max_points (int): Maximum number of points to retain.
+        
+        Returns:
+            list: Subsampled list of (x, y) tuples.
+        """
+        n = len(points)
+        if n <= max_points:
+            return points  # no subsampling needed
+
+        step = n / max_points
+        indices = [int(i * step) for i in range(max_points)]
+        return [points[i] for i in indices]
+
+    def _fit_circle_numpy(self, points):
+        """
+        Fit a circle to points using linear least squares (unused, kept for reference).
+        
+        Uses an algebraic fit method. Not currently used; gradient descent method
+        in estimate_arc_center() is preferred.
+        
+        Args:
+            points (list): List of (x, y) tuples.
+        
+        Returns:
+            tuple: (center_x, center_y, radius) or (None, None, None) if fit fails.
+        """
+        x = np.array([p[0] for p in points])
+        y = np.array([p[1] for p in points])
+        A = np.c_[2 * x, 2 * y, np.ones(len(points))]
+        b = x**2 + y**2
+
+        try:
+            sol, _, _, _ = np.linalg.lstsq(A, b, rcond=None)
+            cx, cy = sol[0], sol[1]
+            r = np.sqrt(sol[2] + cx**2 + cy**2)
+            return cx, cy, r
+        except np.linalg.LinAlgError:
+            return None, None, None
