@@ -64,7 +64,7 @@ class PoseEstimator(threading.Thread):
         self.reversal_angles = deque(maxlen=10)
         
         # ─────────────────────────────────────────────────────────────────────────────
-        # VELOCITY & REVERSAL TRACKING
+        # VELOCITY REVERSAL TRACKING
         # ─────────────────────────────────────────────────────────────────────────────
         self.last_reversal_time = None
         self.last_reversal_angle = None
@@ -229,8 +229,11 @@ class PoseEstimator(threading.Thread):
             row (dict): Sensor data row with keys: cop_x, cop_y, total_weight
         """
         now = time.time()
+        cop_x = row["cop_x"]
+        cop_y = row["cop_y"]
+        total_weight = row["total_weight"]  
 
-        angle = self._estimate_angle(row["cop_x"], row["cop_y"])
+        angle = self._estimate_angle(cop_x, cop_y)
         velocity = self._estimate_velocity()
         acceleration = self._estimate_acceleration()
         c_x, c_y, c_r = self.estimate_arc_center()
@@ -245,9 +248,9 @@ class PoseEstimator(threading.Thread):
             "velocity": velocity,
             "acceleration": acceleration,
             "last_reversal_angle": self.last_reversal_angle,
-            "total_weight": row["total_weight"],
-            "cop_x": row["cop_x"],
-            "cop_y": row["cop_y"],
+            "total_weight": total_weight,
+            "cop_x": cop_x,
+            "cop_y": cop_y,
             "phase": phase,
             "direction_positive": direction,
             "motion_state": motion_state,
