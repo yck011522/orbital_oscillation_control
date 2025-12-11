@@ -1,4 +1,3 @@
-import threading
 import time
 from pose_estimator import PoseEstimator
 from visualization_thread import PoseVisualizer

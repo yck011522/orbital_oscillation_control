@@ -60,15 +60,14 @@ class PoseEstimator(threading.Thread):
         # HISTORY & TRACKING
         # ─────────────────────────────────────────────────────────────────────────────
         self.history = deque(maxlen=history_size)
-        self.reversal_angles = deque(maxlen=10)
         self.reversal_times = deque(maxlen=20)
+        self.reversal_angles = deque(maxlen=10)
         
         # ─────────────────────────────────────────────────────────────────────────────
         # VELOCITY & REVERSAL TRACKING
         # ─────────────────────────────────────────────────────────────────────────────
-        self.last_velocity = 0.0
-        self.last_reversal = None
         self.last_reversal_time = None
+        self.last_reversal_angle = None
 
         # ─────────────────────────────────────────────────────────────────────────────
         # POSITION FILTER (CoP smoothing)
@@ -237,12 +236,6 @@ class PoseEstimator(threading.Thread):
         c_x, c_y, c_r = self.estimate_arc_center()
         self._check_velocity_reversal()
 
-        if self.last_velocity * velocity < 0:
-            self.last_reversal = angle
-            self.reversal_angles.append(angle)
-
-        self.last_velocity = velocity
-
         phase = self.estimate_phase()
         direction = self.estimate_direction()
         motion_state = self._classify_motion_state()
@@ -251,7 +244,7 @@ class PoseEstimator(threading.Thread):
             "angle": angle,
             "velocity": velocity,
             "acceleration": acceleration,
-            "last_reversal_angle": self.last_reversal,
+            "last_reversal_angle": self.last_reversal_angle,
             "total_weight": row["total_weight"],
             "cop_x": row["cop_x"],
             "cop_y": row["cop_y"],

@@ -68,7 +68,6 @@ class Controller(threading.Thread):
         self.center_restoring_gain = 0.0195  # Gain for restoring vector towards center
 
         # Control output parameters
-        self.max_control_vector_acc = 0.03 # Prevents sudden jump of the output when switching between mode (0.03 from quick estimation, need further tuning)
         self.current_tilt_vector = (0.0, 0.0)  # Current tilt vector in XY coordinates
         self.target_tilt = 0.0  # Current target tilt angle in degrees
         self.target_azimuth = 0.0  # Current target azimuth angle in degrees
@@ -168,15 +167,6 @@ class Controller(threading.Thread):
                 if object_state["motion_state"] == 1:  # object have decayed to a stop
                     self.stationary_begin_time = time.time()
                     self.state = self.STATE_WAIT_WHILE_STATIONARY
-
-            # # Limit change of control vector
-            # delta_control_vector = (control_vector[0] - previous_control_vector[0], control_vector[1] - previous_control_vector[1])
-            # delta_control_vector_length = math.sqrt(delta_control_vector[0]**2 + delta_control_vector[1]**2)
-            # # print(f"delta_control_vector_length = {delta_control_vector_length}")
-            # if delta_control_vector_length > self.max_control_vector_acc * self.delta_time:
-            #     fraction = self.max_control_vector_acc * self.delta_time / delta_control_vector_length
-            #     control_vector = (previous_control_vector[0] + delta_control_vector[0] * fraction, previous_control_vector[1] + delta_control_vector[1] *fraction)
-            #     print (f"Conrol Vector Capped at {fraction:.2f} pct")
 
             previous_control_vector =  control_vector
 
