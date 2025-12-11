@@ -33,10 +33,10 @@ class Controller(threading.Thread):
         # Timing and parameters
         self.delay_timer_start = None
         self.full_rotation_start_time = time.time()
+        self.full_rotation_duration = 12.0
         self.wait_time_after_stationary = 40.0
         self.stationary_begin_time = 0
         self.delay_duration = 2.0
-        self.pump_duration = 10.0
 
         # Oscillation control mode parameters
         self.oscillation_tilt = 0.0
@@ -61,8 +61,12 @@ class Controller(threading.Thread):
         self.lead_angle_deg = 90  # lead angle for azimuth
 
         # Full rotation control mode parameters
-        self.full_rotation_tilt = 0.10  # degrees (constant tilt to maintain)
+        self.full_rotation_tilt = 0.11  # degrees (constant tilt to maintain)
         self.full_rotation_lead_angle = 90.0  # degrees ahead of current object angle
+
+        # Decay Finish parameters
+        self.decay_finish_velocity_threshold = 20.0 # Decay finished when velocity below this (deg/s) for over x seconds
+        self.decay_finish_duration = 6.0  # seconds
 
         # Center restoring vector parameters
         self.center_restoring_gain = 0.0195  # Gain for restoring vector towards center
@@ -97,12 +101,19 @@ class Controller(threading.Thread):
         else:
             print("Motors homing skipped in non-live mode.")
 
+    def get_state_text(self):
+        state_names = {
+            self.STATE_WAIT_WHILE_STATIONARY: "WAIT_WHILE_STATIONARY",
+            self.STATE_DELAY_BEFORE_PUMP: "DELAY_BEFORE_PUMP",
+            self.STATE_PUMP: "PUMP",
+            self.STATE_DECAY: "DECAY",
+        }
+        return state_names.get(self.state, "UNKNOWN_STATE")
+
     def run(self):
 
         while not self.pose_estimator.is_ready():
             time.sleep(0.01)
-
-        previous_control_vector = (0.0, 0.0) # For limiting change of vector
 
         while not self.pose_estimator.is_finished() and not self.stop_event.is_set():
             self.delta_time = time.time() - self.last_control_time
@@ -157,7 +168,7 @@ class Controller(threading.Thread):
 
                 # Logic to transition to decay state
                 if object_state["motion_state"] == 3:  # Full rotation reached
-                    if time.time() - self.full_rotation_start_time > self.pump_duration:
+                    if time.time() - self.full_rotation_start_time > self.full_rotation_duration:
                         self.state = self.STATE_DECAY
                 else:
                     self.full_rotation_start_time = time.time()
@@ -167,11 +178,15 @@ class Controller(threading.Thread):
             elif self.state == self.STATE_DECAY:
                 self.control_method = "decay"
                 # Optional: graceful decay logic
+                if object_state["motion_state"] == 2: # slow oscillation
+                    if self.pose_estimator.get_max_velocity_history(self.decay_finish_duration) < self.decay_finish_velocity_threshold:
+                        print("Decay finished - object motion below threshold.")
+                        self.stationary_begin_time = time.time()
+                        self.state = self.STATE_PUMP
+
                 if object_state["motion_state"] == 1:  # object have decayed to a stop
                     self.stationary_begin_time = time.time()
                     self.state = self.STATE_WAIT_WHILE_STATIONARY
-
-            previous_control_vector =  control_vector
 
             # Compute center restoring vector
             center_restoring_vector = self.control_center_restoring_vector(object_state)

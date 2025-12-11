@@ -32,8 +32,15 @@ if __name__ == "__main__":
     while True:
         # print(f"Pose Frequency: {pose_estimator.freq_estimator.smoothed_freq :.2f} Hz, Controller Frequency: {controller.freq_estimator.smoothed_freq :.2f} Hz")
         # print(f"Pose Estimator State: {pose_estimator.get_phase()}")
-        time.sleep(0.2)
-        print(f"speed : {pose_estimator.state.get('velocity',None)}")
+        time.sleep(0.1)
+        state = pose_estimator.get_latest_state()
+        arc_center_x = state.get('arc_center_x',None)
+        arc_center_y = state.get('arc_center_y',None)
+        arc_center_deviation = None
+        if arc_center_x is not None and arc_center_y is not None:
+            arc_center_deviation = (arc_center_x**2 + arc_center_y**2)**0.5
+        # Format numbers to 2 decimals
+        print(f"Object State: {state.get('motion_state',None)}, control_state: {controller.get_state_text()}, speed : {state.get('velocity',None)}, arc_center_deviation: {arc_center_deviation}")
         # print(
         #     f"Visualization Thread Frequency: {visualizer.freq_estimator.smoothed_freq:.2f} Hz, "
         #     f"Controller Frequency: {controller.freq_estimator.smoothed_freq:.2f} Hz, "

@@ -172,6 +172,29 @@ class PoseEstimator(threading.Thread):
         with self.lock:
             return self.state.copy()
 
+    def get_max_velocity_history(self, time_window=2.0):
+        """
+        Get the maximum absolute velocity over a recent time window.
+        
+        Args:
+            time_window (float): Time window in seconds to consider.
+        
+        Returns:
+            float: Maximum absolute velocity in deg/s within the time window.
+        """
+        now = time.time()
+        max_velocity = 0.0
+
+        with self.lock:
+            for s in reversed(self.history):
+                age = now - s["timestamp"]
+                if age > time_window:
+                    break
+                vel = abs(s.get("velocity", 0.0))
+                if vel > max_velocity:
+                    max_velocity = vel
+
+        return max_velocity
     # ─────────────────────────────────────────────────────────────────────────────
     # MAIN EXECUTION LOOP
     # ─────────────────────────────────────────────────────────────────────────────
