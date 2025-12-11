@@ -1,37 +1,209 @@
 import time
 import numpy as np
 import cv2
+import math
 from pose_estimator import PoseEstimator
+from controller import Controller
+from timing_utils import FrequencyEstimator
+import threading
+
+FONT = cv2.FONT_HERSHEY_SIMPLEX
+
+SAFETY_CIRCLE_RADIUS_MM = 250
+SCALE = 1.6  # pixels per mm (800 px represents 200 mm)
+SCALE_DEGREES = 160  # pixels per degree (800 px represents +-2 degrees)
 
 
-SAFETY_CIRCLE_RADIUS_MM = 200
-SCALE = 2  # pixels per mm (800 px represents 200 mm)
+class PoseVisualizer(threading.Thread):
+    def __init__(
+        self,
+        pose_estimator: PoseEstimator,
+        controller: Controller = None,
+        canvas_height=800,
+        canvas_width=1600,
+    ):
+        super().__init__(daemon=True, name="PoseVisualizer")
+        self.pose_estimator = pose_estimator
+        self.controller = controller
+        self.canvas_height = canvas_height
+        self.canvas_width = canvas_width
+        self.freq_estimator = FrequencyEstimator(alpha=0.2)
 
+        self.SCALE = 2  # pixels per mm
+        self.time_window = 10.0
 
-def visualization_thread(
-    pose_estimator: PoseEstimator, canvas_height=800, canvas_width=1600
-):
-    polar_size = (canvas_height, canvas_width // 2)
-    timeplot_size = (canvas_height, canvas_width // 2)
-    time_window = 10.0  # seconds
+        self.polar_size = (canvas_height, canvas_width // 2)
+        self.timeplot_size = (canvas_height, canvas_width // 2)
 
-    while not pose_estimator.is_finished():
-        with pose_estimator.lock:
-            history = list(pose_estimator.history)
-            shared_state = pose_estimator.state.copy()
+    def on_slider_acc_change(self, x):
+        """Callback for track-bar changes."""
+        if self.controller is not None:
+            setattr(self.controller, "acceleration_rate", x / 100.0),
+
+    def run(self):
+
+        cv2.namedWindow("Pose Visualization")
+
+        cv2.createTrackbar(
+            "START - Tilt Acc x100",
+            "Pose Visualization",
+            (int)(self.controller.starting_acceleration_rate * 100),
+            200,
+            lambda x: setattr(self.controller, "starting_acceleration_rate", x / 100.0),
+        )
+        cv2.createTrackbar(
+            "START - Max Tilt x100",
+            "Pose Visualization",
+            (int)(self.controller.starting_max_tilt * 100),
+            200,
+            # Lambda function to handle max tilt
+            lambda x: setattr(self.controller, "starting_max_tilt", x / 100.0),
+        )  
+        cv2.createTrackbar(
+            "START - Pause Time x100",
+            "Pose Visualization",
+            (int)(self.controller.starting_pause_time * 100),
+            200,
+            # Lambda function to handle max tilt
+            lambda x: setattr(self.controller, "starting_pause_time", x / 100.0),
+        )  
+        
+
+        cv2.createTrackbar(
+            "OSC - Act Start",
+            "Pose Visualization",
+            self.controller.phase_start,
+            360,
+            lambda x: setattr(self.controller, "phase_start", x),
+        )
+        cv2.createTrackbar(
+            "OSC - Act End",
+            "Pose Visualization",
+            self.controller.phase_end,
+            360,
+            lambda x: setattr(self.controller, "phase_end", x),
+        )
+        cv2.createTrackbar(
+            "OSC - Lead Angle",
+            "Pose Visualization",
+            self.controller.lead_angle_deg,
+            180,
+            lambda x: setattr(self.controller, "lead_angle_deg", x),
+        )
+        
+      
+
+        # cv2.createTrackbar(
+        #     "OSC - Tilt Acc x100",
+        #     "Pose Visualization",
+        #     (int)(self.controller.acceleration_rate * 100),
+        #     100,
+        #     # Set both acceleration_rate
+        #     self.on_slider_acc_change,
+        # )
+        # cv2.createTrackbar(
+        #     "OSC - Max Tilt x100",
+        #     "Pose Visualization",
+        #     (int)(self.controller.max_tilt * 100),
+        #     100,
+        #     # Lambda function to handle max tilt
+        #     lambda x: setattr(self.controller, "max_tilt", x / 100.0),
+        # )
+        cv2.createTrackbar(
+            "FULL - Tilt x100",
+            "Pose Visualization",
+            (int)(self.controller.full_rotation_tilt * 100),
+            100,
+            # Lambda function to handle full rotation
+            lambda x: setattr(self.controller, "full_rotation_tilt", x / 100.0),
+        )
+        cv2.createTrackbar(
+            "Center Restoring Gain x10000",
+            "Pose Visualization",
+            int(self.controller.center_restoring_gain * 10000),
+            200,
+            # Lambda function to handle center restoring gain
+            lambda x: setattr(self.controller, "center_restoring_gain", x / 10000.0),
+        )
+        while not self.pose_estimator.is_finished():
+            self._render_frame()
+            time.sleep(1 / 30.0)
+        cv2.destroyAllWindows()
+
+    def _render_frame(self):
+        with self.pose_estimator.lock:
+            history = list(self.pose_estimator.history)
+            shared_state = self.pose_estimator.state.copy()
 
         if len(history) < 2 or "cop_x" not in shared_state:
-            time.sleep(0.01)
-            continue
+            return
+
+        self.freq_estimator.update()
 
         t_now = history[-1]["timestamp"]
-        t0 = t_now - time_window
+        t0 = t_now - self.time_window
 
-        polar_img = np.ones((*polar_size, 3), dtype=np.uint8) * 255
-        time_img = np.ones((*timeplot_size, 3), dtype=np.uint8) * 255
+        polar_img = self._draw_polar_view(history, shared_state)
+        time_img = self._draw_time_plot(history, shared_state, t0, t_now)
 
+        # Combine and show
+        canvas = np.hstack([polar_img, time_img])
+        self._draw_frequencies(canvas)
+        cv2.imshow("Pose Visualization", canvas)
+        # cv2.moveWindow("Pose Visualization", 50, 50)
+        cv2.waitKey(1)
+
+    def _draw_frequencies(self, canvas):
+        lines = [
+            f"Vis Freq:   {self.freq_estimator.get():.1f} Hz",
+            f"Pose Freq:  {self.pose_estimator.freq_estimator.get():.1f} Hz",
+        ]
+        if self.controller is not None and hasattr(self.controller, "freq_estimator"):
+            lines.append(f"Ctrl Freq:  {self.controller.freq_estimator.get():.1f} Hz")
+        for i, text in enumerate(lines):
+            y = 20 + i * 20
+            cv2.putText(
+                canvas,
+                text,
+                (10, y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
+
+        # === Draw Controller State Info ===
+        if self.controller is not None:
+            state_name = {
+                self.controller.STATE_WAIT_WHILE_STATIONARY: "STATE_WAIT_WHILE_STATIONARY",
+                self.controller.STATE_DELAY_BEFORE_PUMP: "DELAY_BEFORE_PUMP",
+                self.controller.STATE_PUMP: "PUMP",
+                self.controller.STATE_DECAY: "DECAY",
+            }.get(self.controller.state, "UNKNOWN")
+
+            text_lines = [
+                f"FSM: {state_name} | {self.controller.control_method}",
+            ]
+
+            # Draw text at bott8om-left corner
+            x = 20
+            line_height = 25
+            y_base = canvas.shape[0] - 20  # 20 px above bottom edge
+
+            for i, line in enumerate(reversed(text_lines)):  # draw bottom-up
+                y = y_base - i * line_height
+                cv2.putText(
+                    canvas, line, (x, y), FONT, 0.5, (255, 255, 255), 1, cv2.LINE_AA
+                )
+
+    def _draw_polar_view(self, history, shared_state):
+        # You can paste your full polar panel drawing code here unchanged,
+        # wrapped inside this method and using `self.polar_size`, etc.
+        polar_img = np.ones((*self.polar_size, 3), dtype=np.uint8) * 255
+        # return polar_img
         ## === LEFT PANEL: Polar View ===
-        center = (polar_size[1] // 2, polar_size[0] // 2)
+        center = (self.polar_size[1] // 2, self.polar_size[0] // 2)
 
         # Define colors
         OUTSIDE_SAFETY = (0, 0, 50)
@@ -40,7 +212,6 @@ def visualization_thread(
         RING_MINOR = (180, 180, 180)
         RING_MAJOR = (120, 120, 120)
         TEXT_COLOR = (0, 0, 0)
-        FONT = cv2.FONT_HERSHEY_SIMPLEX
 
         # Draw background (outside area dark grey)
         polar_img[:] = OUTSIDE_SAFETY
@@ -80,6 +251,35 @@ def visualization_thread(
                 polar_img, label, label_pos, FONT, 0.5, TEXT_COLOR, 1, cv2.LINE_AA
             )
 
+            # === Draw degrees label below the ring ===
+            degrees_label = f"{r_px / SCALE_DEGREES:.2f} deg"
+            (text_w, text_h), _ = cv2.getTextSize(degrees_label, FONT, 0.5, 1)
+            degrees_label_pos = (
+                center[0] - text_w // 2,
+                center[1] + r_px + text_h + 10,
+            )
+            # Draw background rectangle for degrees label
+            rect_top_left = (
+                degrees_label_pos[0] - 4,
+                degrees_label_pos[1] - text_h - 4,
+            )
+            rect_bottom_right = (
+                degrees_label_pos[0] + text_w + 4,
+                degrees_label_pos[1] + 4,
+            )
+            cv2.rectangle(polar_img, rect_top_left, rect_bottom_right, LIGHT_GREY, -1)
+            # Draw text
+            cv2.putText(
+                polar_img,
+                degrees_label,
+                degrees_label_pos,
+                FONT,
+                0.5,
+                TEXT_COLOR,
+                1,
+                cv2.LINE_AA,
+            )
+
         # Draw safety circle again (outline on top)
         cv2.circle(
             polar_img, center, int(SAFETY_CIRCLE_RADIUS_MM * SCALE), (100, 100, 255), 3
@@ -116,8 +316,64 @@ def visualization_thread(
         cv2.circle(polar_img, (px, py), 7, DARK_GREY, -1)  # outer dark grey ring
         cv2.circle(polar_img, (px, py), 4, (255, 255, 255), -1)  # inner white dot
 
-        ## === RIGHT PANEL: Time History Plot ===
+        # === Draw current tilt direction as a dot ===
+        if self.controller is not None:
 
+            tilt = getattr(self.controller, "target_tilt", 0.0)
+            azimuth_deg = getattr(self.controller, "target_azimuth", 0.0)
+
+            # Convert azimuth to radians
+            azimuth_rad = math.radians(azimuth_deg)
+
+            # Polar to cartesian conversion (Y-axis flipped for image coords)
+            dx = tilt * SCALE_DEGREES * math.cos(azimuth_rad)
+            dy = tilt * SCALE_DEGREES * math.sin(azimuth_rad)
+
+            px = int(center[0] + dx)
+            py = int(center[1] - dy)
+
+            cv2.circle(polar_img, (px, py), 8, (255, 0, 0), -1)  # blue dot
+            cv2.putText(
+                polar_img, "Tilt Vector", (px + 10, py), FONT, 0.5, (0, 0, 0), 1
+            )
+
+        # === Draw estimated arc center and fitted circle ===
+        cx = getattr(self.pose_estimator, "arc_filtered_center_x", None)
+        cy = getattr(self.pose_estimator, "arc_filtered_center_y", None)
+        r = getattr(self.pose_estimator, "arc_filtered_radius", None)
+
+        if cx is not None and cy is not None and r is not None:
+            # All values are in mm, just like CoP trail
+            cx_px = int(center[0] + cx * SCALE)
+            cy_px = int(center[1] - cy * SCALE)  # Y flipped for image coordinates
+            radius_px = int(r * SCALE)
+
+            # Draw arc center dot
+            cv2.circle(polar_img, (cx_px, cy_px), 5, (0, 0, 255), -1)  # red dot
+            cv2.putText(
+                polar_img, "Traj Ctr", (cx_px + 10, cy_px), FONT, 0.5, (0, 0, 0), 1
+            )
+            # Draw estimated circle
+            cv2.circle(
+                polar_img, (cx_px, cy_px), radius_px, (0, 0, 255), 1
+            )  # thin red circle
+            cv2.putText(
+                polar_img,
+                f"r = {r:.2f}",
+                (cx_px + 10, cy_px + 15),
+                FONT,
+                0.5,
+                (0, 0, 0),
+                1,
+            )
+
+        return polar_img
+
+    def _draw_time_plot(self, history, shared_state, t0, t_now):
+        # You can paste your full time history panel drawing code here unchanged,
+        # replacing globals like TIME_WINDOW or POS_RANGE with method-local or self variables.
+        time_img = np.ones((*self.timeplot_size, 3), dtype=np.uint8) * 255
+        # return time_img
         # --- Right panel plot configuration ---
         TIME_WINDOW = 10.0  # seconds
 
@@ -130,11 +386,37 @@ def visualization_thread(
         POS_JUMP_THRESHOLD = 50  # degrees
         VEL_JUMP_THRESHOLD = 80  # deg/sec
         ACC_JUMP_THRESHOLD = 200  # deg/sec²
-        PHASE_JUMP_THRESHOLD = 0.6  # large enough to skip across reset at reversal
+        PHASE_JUMP_THRESHOLD = 180  # large enough to skip across reset at reversal
+        TEXT_COLOR = (0, 0, 0)
 
         # === RIGHT PANEL: Time History ===
+        def draw_trace(history, field, y_offset, color, vmin, vmax, threshold):
+            pts = [
+                (s["timestamp"], s[field])
+                for s in history
+                if t0 <= s["timestamp"] <= t_now
+            ]
+            if len(pts) < 2:
+                return
+            for i in range(1, len(pts)):
+                t0_, v0 = pts[i - 1]
+                t1_, v1 = pts[i]
+                if abs(v1 - v0) > threshold:
+                    continue
+                x0 = t_to_x(t0_)
+                x1 = t_to_x(t1_)
+                y0 = int(stripe_h * (1 - normalize(v0, vmin, vmax))) + y_offset
+                y1 = int(stripe_h * (1 - normalize(v1, vmin, vmax))) + y_offset
+                cv2.line(time_img, (x0, y0), (x1, y1), color, 2)
 
         # --- Right panel layout setup ---
+
+        MOTION_STATE_COLORS = {
+            0: (180, 180, 180),  # Unknown – gray
+            1: (200, 200, 255),  # Stationary/Vibration – light blue
+            2: (255, 200, 200),  # Oscillation – light red
+            3: (200, 255, 200),  # Full Rotation – light green
+        }
 
         PLOT_FIELDS = [
             {
@@ -168,16 +450,25 @@ def visualization_thread(
                 "field": "phase",
                 "label": "Phase",
                 "vmin": 0.0,
-                "vmax": 1.0,
+                "vmax": 360.0,
                 "bg_color": (240, 240, 240),
                 "color": (0, 0, 255),
                 "threshold": PHASE_JUMP_THRESHOLD,
             },
+            {
+                "field": "motion_state",
+                "label": "Motion State",
+                "vmin": -1,
+                "vmax": 4,
+                "bg_color": (200, 200, 200),
+                "color": (0, 0, 0),
+                "threshold": 0,
+            },
         ]
         # --- Right panel plot setup ---
         plot_margin = 0
-        plot_w = timeplot_size[1] - 2 * plot_margin
-        plot_h = timeplot_size[0] - 2 * plot_margin
+        plot_w = self.timeplot_size[1] - 2 * plot_margin
+        plot_h = self.timeplot_size[0] - 2 * plot_margin
         stripe_h = plot_h // len(PLOT_FIELDS)
 
         def t_to_x(t):
@@ -185,25 +476,6 @@ def visualization_thread(
 
         def normalize(val, vmin, vmax):
             return (val - vmin) / (vmax - vmin + 1e-6)
-
-        def draw_trace(history, field, y_offset, color, vmin, vmax, threshold):
-            pts = [
-                (s["timestamp"], s[field])
-                for s in history
-                if t0 <= s["timestamp"] <= t_now
-            ]
-            if len(pts) < 2:
-                return
-            for i in range(1, len(pts)):
-                t0_, v0 = pts[i - 1]
-                t1_, v1 = pts[i]
-                if abs(v1 - v0) > threshold:
-                    continue  # skip discontinuities
-                x0 = t_to_x(t0_)
-                x1 = t_to_x(t1_)
-                y0 = int(stripe_h * (1 - normalize(v0, vmin, vmax))) + y_offset
-                y1 = int(stripe_h * (1 - normalize(v1, vmin, vmax))) + y_offset
-                cv2.line(time_img, (x0, y0), (x1, y1), color, 2)
 
         # === PASS 1: draw all backgrounds and labels first ===
         for i, cfg in enumerate(PLOT_FIELDS):
@@ -278,6 +550,19 @@ def visualization_thread(
                     time_img, txt, (x, y), FONT, 0.5, TEXT_COLOR, 1, cv2.LINE_AA
                 )
 
+        # === PASS 2: draw all traces on top of backgrounds ===
+        for i, cfg in enumerate(PLOT_FIELDS):
+            y_offset = plot_margin + i * stripe_h
+            draw_trace(
+                history,
+                cfg["field"],
+                y_offset,
+                cfg["color"],
+                cfg["vmin"],
+                cfg["vmax"],
+                cfg["threshold"],
+            )
+
         # === Draw vertical 1-second grid lines with labels ===
         start_sec = int(t0)
         end_sec = int(t_now)
@@ -302,9 +587,9 @@ def visualization_thread(
                 cv2.putText(
                     time_img, sec_label, label_pos, FONT, 0.4, (0, 0, 0), 1, cv2.LINE_AA
                 )
-
+        reversal_times = list(self.pose_estimator.reversal_times)
         # Velocity Reversal markers
-        for t_reversal, _ in pose_estimator.reversal_times:
+        for t_reversal, _ in reversal_times:
             if t0 <= t_reversal <= t_now:
                 x = t_to_x(t_reversal)
                 cv2.line(
@@ -312,9 +597,9 @@ def visualization_thread(
                 )
 
         # Draw reversal intervals in milliseconds
-        for i in range(1, len(pose_estimator.reversal_times)):
-            t1, _ = pose_estimator.reversal_times[i - 1]
-            t2, _ = pose_estimator.reversal_times[i]
+        for i in range(1, len(reversal_times)):
+            t1, _ = reversal_times[i - 1]
+            t2, _ = reversal_times[i]
 
             if not (t0 <= t1 <= t_now and t0 <= t2 <= t_now):
                 continue  # Skip if both not visible
@@ -355,37 +640,4 @@ def visualization_thread(
                 time_img, text, text_pos, font, font_scale, text_color, thickness
             )
 
-        # === PASS 2: draw all data plots ===
-        for i, cfg in enumerate(PLOT_FIELDS):
-            y_offset = plot_margin + i * stripe_h
-            draw_trace(
-                history,
-                cfg["field"],
-                y_offset,
-                cfg["color"],
-                cfg["vmin"],
-                cfg["vmax"],
-                cfg["threshold"],
-            )
-
-        # Final baseline
-        cv2.line(
-            time_img,
-            (plot_margin, plot_margin + plot_h),
-            (plot_margin + plot_w, plot_margin + plot_h),
-            (0, 0, 0),
-            1,
-        )
-
-        # === Combine images for display ===
-
-        combined = np.hstack([polar_img, time_img])
-        cv2.imshow("Pose Visualization", combined)
-        cv2.moveWindow("Pose Visualization", 50, 50)  # (x, y) screen coordinates
-
-        if cv2.waitKey(1) == 27:
-            break
-
-        time.sleep(1 / 30.0)
-
-    cv2.destroyAllWindows()
+        return time_img
