@@ -68,9 +68,12 @@ class Controller(threading.Thread):
         self.center_restoring_gain = 0.0195  # Gain for restoring vector towards center
 
         # Control output parameters
-        self.current_tilt_vector = (0.0, 0.0)  # Current tilt vector in XY coordinates
         self.target_tilt = 0.0  # Current target tilt angle in degrees
         self.target_azimuth = 0.0  # Current target azimuth angle in degrees
+
+        # Rate limiting (Cartesian space)
+        self.max_vector_rate_per_sec = 0.1  # Maximum rate of change of tilt vector per second
+        self.limited_tilt_vector = (0.0, 0.0)  # Current rate-limited tilt vector
 
         # Motor control parameters
         self.prev_positions = {1: None, 2: None, 3: None, 4: None}
@@ -179,9 +182,16 @@ class Controller(threading.Thread):
                 control_vector[1] + center_restoring_vector[1],
             )
 
-            self.current_tilt_vector = total_target_vector
+
+            # === Rate limit the tilt vector (Cartesian space) ===
+            # This prevents jerky transitions between control policies by constraining
+            # the maximum rate of change in the XY vector space
+            self.limited_tilt_vector = self.rate_limit_tilt_vector(
+                total_target_vector, self.limited_tilt_vector, self.delta_time
+            )
+                       
             self.target_tilt, self.target_azimuth = self.tilt_vector_to_tilt_azimuth(
-                self.current_tilt_vector
+                self.limited_tilt_vector
             )
 
             self.send_target_to_motor(self.target_tilt, self.target_azimuth)
@@ -327,6 +337,69 @@ class Controller(threading.Thread):
         restoring_tilt = center_distance_to_table_center * self.center_restoring_gain
 
         return self.tilt_azimuth_to_vector(restoring_tilt, restoring_azimuth_deg)
+
+    def rate_limit_tilt_vector(self, target_vector, current_vector, dt):
+        """
+        Rate-limit the tilt vector in Cartesian space to prevent jerky transitions.
+        
+        This method constrains the maximum rate of change of the tilt vector,
+        allowing smooth transitions between control policies without introducing lag.
+        The rate limiting happens in Cartesian space (X, Y) rather than polar space
+        to preserve geometric relationships and ensure smooth motor motion.
+        
+        The algorithm:
+        1. Calculates the desired change in tilt vector (target - current)
+        2. Computes the magnitude of this change
+        3. If magnitude exceeds max_vector_rate_per_sec * dt, scales the change proportionally
+        4. Returns the new limited vector: current + limited_change
+        
+        This ensures smooth transitions when:
+        - Switching between control policies (e.g., PUMP → MAINTAIN)
+        - Motion state oscillates (e.g., bouncing between 1↔2)
+        - Sudden changes in object state occur
+        
+        Args:
+            target_vector (tuple): Desired (x, y) tilt vector
+            current_vector (tuple): Current (x, y) tilt vector (rate-limited from previous frame)
+            dt (float): Time step in seconds since last control cycle
+        
+        Returns:
+            tuple: Rate-limited (x, y) tilt vector
+        """
+        target_x, target_y = target_vector
+        current_x, current_y = current_vector
+        
+        # Calculate desired change in vector
+        delta_x = target_x - current_x
+        delta_y = target_y - current_y
+        
+        # Magnitude of desired change
+        delta_magnitude = math.hypot(delta_x, delta_y)
+        
+        # Maximum allowed change this frame (in vector magnitude units)
+        max_delta_per_frame = self.max_vector_rate_per_sec * dt
+        
+        if delta_magnitude > max_delta_per_frame and delta_magnitude > 1e-6:
+            # Scale down the delta to fit within rate limit
+            # This maintains the direction of change while limiting magnitude
+            scale_factor = max_delta_per_frame / delta_magnitude
+            delta_x *= scale_factor
+            delta_y *= scale_factor
+            
+            # Debug message when rate limiting is active
+            target_tilt, target_azimuth = self.tilt_vector_to_tilt_azimuth(target_vector)
+            current_tilt, current_azimuth = self.tilt_vector_to_tilt_azimuth(current_vector)
+            limited_tilt, limited_azimuth = self.tilt_vector_to_tilt_azimuth((current_x + delta_x, current_y + delta_y))
+            
+            print(f"[RATE LIMIT] Desired delta: {delta_magnitude:.4f} rad/s → Limited to: {max_delta_per_frame:.4f} rad/s | "
+                  f"Target: {target_tilt:.3f}° @ {target_azimuth:.1f}° → "
+                  f"Limited: {limited_tilt:.3f}° @ {limited_azimuth:.1f}°")
+        
+        # Apply limited change
+        limited_x = current_x + delta_x
+        limited_y = current_y + delta_y
+        
+        return (limited_x, limited_y)
 
     def send_target_to_motor(self, target_tilt, target_azimuth):
         now = time.time()
