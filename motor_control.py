@@ -15,19 +15,50 @@ BAUDRATE = 115200
 def list_serial_ports():
     return ['/dev/ttyS0'] + [port.device for port in serial.tools.list_ports.comports()]
 
-def open_serial():
-    for port in list_serial_ports():
-        try:
-            ser = serial.Serial(port, BAUDRATE, timeout=0.1)
-            if not read_position_mm(ser):
-                print(f"⚠️ Failed on {port}, cannot read position.")
-                continue
-            return ser
-        except Exception as e:
-            print(f"⚠️ Failed on {port}: {e}")
+# def open_serial():
+#     for port in list_serial_ports():
+#         try:
+#             ser = serial.Serial(port, BAUDRATE, timeout=0.1)
+#             if not read_position_mm(ser):
+#                 print(f"⚠️ Failed on {port}, cannot read position.")
+#                 continue
+#             return ser
+#         except Exception as e:
+#             print(f"⚠️ Failed on {port}: {e}")
         
-        print("❌ No Motor Serial device found.")
-        return None
+#         print("❌ No Motor Serial device found.")
+#         return None
+
+def open_serial(retry_timeout=30.0, retry_interval=1.0):
+    """
+    Try to open a motor serial port until successful or timeout.
+    """
+    start_time = time.time()
+
+    while time.time() - start_time < retry_timeout:
+        for port in list_serial_ports():
+            try:
+                ser = serial.Serial(port, BAUDRATE, timeout=0.1)
+
+                # Give motor controller a brief moment after power-up
+                time.sleep(0.2)
+
+                # Probe once; transient failure is OK
+                if read_position_mm(ser) is None:
+                    ser.close()
+                    print(f"⚠️ {port}: motor not ready yet.")
+                    continue
+
+                print(f"✅ Connected to motor controller on {port}")
+                return ser
+
+            except Exception as e:
+                print(f"⚠️ {port}: {e}")
+
+        print("⏳ Waiting for motor controller...")
+        time.sleep(retry_interval)
+
+    raise RuntimeError("❌ Motor serial device not available after timeout")
 
 
 
