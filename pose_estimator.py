@@ -68,7 +68,8 @@ class PoseEstimator(threading.Thread):
         # ─────────────────────────────────────────────────────────────────────────────
         self.last_reversal_time = None
         self.last_reversal_angle = None
-
+        self.accumulated_angle = 0.0
+        
         # ─────────────────────────────────────────────────────────────────────────────
         # POSITION FILTER (CoP smoothing)
         # ─────────────────────────────────────────────────────────────────────────────
@@ -280,6 +281,7 @@ class PoseEstimator(threading.Thread):
             "arc_center_x": c_x,
             "arc_center_y": c_y,
             "arc_radius": c_r,
+            "accumulated_angle": self.accumulated_angle,
         }
 
         # === Frequency computation ===
@@ -445,9 +447,7 @@ class PoseEstimator(threading.Thread):
             return 0.0
 
         t_since_last = now - t_curr
-        normalized_phase = min(
-            1.0, max(0.0, t_since_last / half_period)
-        )  # clamp to [0,1]
+        normalized_phase = max(0.0, t_since_last / half_period) # clamp to [0,:]
 
         # Use velocity sign to infer direction
         latest_velocity = self.state.get("velocity", 0.0)
@@ -545,7 +545,7 @@ class PoseEstimator(threading.Thread):
         if self.last_reversal_time is None:
             return 2  # Oscillation (no reversal yet)
 
-        accumulated_angle = 0.0
+        self.accumulated_angle = 0.0
         prev_angle = None
 
         # Go backwards through history until last reversal
@@ -558,10 +558,10 @@ class PoseEstimator(threading.Thread):
 
             if prev_angle is not None:
                 delta = self.wrapped_angle_diff(angle, prev_angle)
-                accumulated_angle += abs(delta)
+                self.accumulated_angle += abs(delta)
             prev_angle = angle
 
-            if accumulated_angle >= 360:
+            if self.accumulated_angle >= 540: # used to be 360
                 return 3  # Full Rotation
 
         return 2  # Oscillation

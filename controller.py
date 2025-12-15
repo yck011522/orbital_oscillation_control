@@ -94,6 +94,7 @@ class Controller(threading.Thread):
         # Serial connection for motor control
         if self.live_output:
             self.ser = open_serial()
+            time.sleep(5.0)
             homing_result = home_all_motors(self.ser, settle_position_mm=28.1)
             if not homing_result:
                 print("⚠️ Homing failed. Exiting controller.")
@@ -260,6 +261,7 @@ class Controller(threading.Thread):
         """
 
         phase_deg = state["phase"]
+        phase_deg = phase_deg % 360  # Normalize to [0, 360]
         obj_angle_deg = state["angle"]
 
         if getattr(self, "oscillation_tilt", None) is None:

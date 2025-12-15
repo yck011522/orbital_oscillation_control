@@ -40,7 +40,8 @@ if __name__ == "__main__":
         if arc_center_x is not None and arc_center_y is not None:
             arc_center_deviation = (arc_center_x**2 + arc_center_y**2)**0.5
         # Format numbers to 2 decimals
-        print(f"Object State: {state.get('motion_state',None)}, control_state: {controller.get_state_text()}, speed : {state.get('velocity',None)}, arc_center_deviation: {arc_center_deviation}")
+        # print(f"Object State: {state.get('motion_state',None)}, control_state: {controller.get_state_text()}, speed : {state.get('velocity',None)}, arc_center_deviation: {arc_center_deviation}, accumulated_angle: {state.get('accumulated_angle',None)}")
+        print(f"Object State: {state.get('motion_state',None)}, control_state: {controller.get_state_text()}, speed : {state.get('velocity',None)}, phase: {state.get('phase',None)}, accumulated_angle: {state.get('accumulated_angle',None)}")
         # print(
         #     f"Visualization Thread Frequency: {visualizer.freq_estimator.smoothed_freq:.2f} Hz, "
         #     f"Controller Frequency: {controller.freq_estimator.smoothed_freq:.2f} Hz, "
