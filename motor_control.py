@@ -5,7 +5,7 @@ import serial.tools.list_ports
 # === Mechanical Constants ===
 MICROSTEPS = 16
 STEPS_PER_REV = 200 * MICROSTEPS
-LEADSCREW_PITCH_MM = 2.0
+LEADSCREW_PITCH_MM = 4.0
 STEPS_PER_MM = STEPS_PER_REV / LEADSCREW_PITCH_MM  # = 1600
 
 # === Serial Settings ===
